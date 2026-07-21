@@ -19,6 +19,8 @@ data class MessageEntity(
     val isEdit: Boolean = false,
     val react: String? = null,
     val currentStatus: Int = 1,
+    val seqNum: Int = 0,
+    val ratchetPubKey: String? = null,
+    val isPlaintextCached: Boolean = false,
     @PrimaryKey(autoGenerate = true) val id: Int = 0
-
 )

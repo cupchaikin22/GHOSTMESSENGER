@@ -36,6 +36,7 @@ interface MessageDao {
     """)
     fun getAllLastMessages(): Flow<List<MessageEntity>>
 
+    // ✅ ИСПРАВЛЕНО: точное совпадение вместо LIKE
     @Query("SELECT secretKey FROM encryption_keys WHERE chatId = :chatId LIMIT 1")
     suspend fun getSecretKeyForChat(chatId: String): String?
 
@@ -51,12 +52,13 @@ interface MessageDao {
     @Query("SELECT * FROM settings WHERE id = 0")
     fun getSettingsSync(): SettingsEntity?
 
-    @Query("SELECT secretKey FROM encryption_keys WHERE chatId LIKE '%' || :recipientId || '%' LIMIT 1")
-    fun getSecretKeyForChatSync(recipientId: String): String?
+    // ✅ ИСПРАВЛЕНО: точное совпадение вместо LIKE
+    @Query("SELECT secretKey FROM encryption_keys WHERE chatId = :chatId LIMIT 1")
+    fun getSecretKeyForChatSync(chatId: String): String?
+
+    @Query("DELETE FROM encryption_keys WHERE chatId = :chatId") // укажи свое имя таблицы
+    suspend fun deleteSecretKeyForChat(chatId: String)
 
     @Query("DELETE FROM messages WHERE chatId = :chatId")
     suspend fun deleteMessagesForChat(chatId: String)
-
-
-
 }

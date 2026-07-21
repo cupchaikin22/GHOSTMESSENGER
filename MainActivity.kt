@@ -1,36 +1,70 @@
 package io.ghostsoftware.ghostchat
 
+import android.Manifest
 import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.*
 import com.google.firebase.messaging.FirebaseMessaging
-import io.ghostsoftware.ghostchat.ui.theme.GhostchatTheme
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private val encryptionManager = EncryptionManager()
+    // ✅ ЗАМЕНЕНО: EncryptionManager → GhostKeyManager
+    private lateinit var keyManager: GhostKeyManager
     private val database by lazy { AppDatabase.getDatabase(this) }
+
+    // Compose-совместимый флаг: true только после того, как ensureKeysExist()
+    // реально завершился (успешно или с уже залогированной ошибкой).
+    // mutableStateOf, а не обычный var — Compose должен перекомпоноваться при смене.
+    private val keysReadyState = androidx.compose.runtime.mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         FirebaseApp.initializeApp(this)
 
-        // --- НОВАЯ ЛОГИКА: ДИНАМИЧЕСКИЙ ANTI-SCREENSHOT ---
+        // ✅ ЗАМЕНЕНО: Инициализируем GhostKeyManager
+        // ensureKeysExist() генерирует X25519 + Ed25519 ключи при первом запуске
+        // и публикует публичные ключи в Firebase. Не падает у новых пользователей.
+        keyManager = GhostKeyManager(this)
+        // ВАЖНО: keysReadyState — единственный источник правды о готовности identity-ключей.
+        // ChatScreen/GhostChatApp обязаны дождаться true ПЕРЕД любым вызовом encryptMessage.
+        // Раньше здесь был "fire-and-forget" launch без синхронизации с UI — при быстром
+        // старте (уже залогиненный юзер, startScreen="list") ChatScreen мог открыться и
+        // отправить сообщение до того, как ensureKeysExist() успевал сгенерировать ключи,
+        // что валило GhostSessionManager.createInitiatorSession в фатальный краш.
+        lifecycleScope.launch {
+            try {
+                keyManager.ensureKeysExist()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "ensureKeysExist failed: ${e.javaClass.simpleName}", e)
+            } finally {
+                keysReadyState.value = true
+            }
+        }
+
+        // Динамический ANTI-SCREENSHOT
         lifecycleScope.launch {
             database.messageDao().getSettings().collectLatest { settings ->
-                // Если securityLevel >= 2, включаем защиту
                 val isSecure = (settings?.securityLevel ?: 1) >= 2
                 if (isSecure) {
                     window.setFlags(
@@ -43,85 +77,27 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Синхронизация ключей (под новый RSA стандарт)
-        if (!encryptionManager.isKeyGenerated()) {
-            encryptionManager.generateIdentityKeys()
-        }
-
         enableEdgeToEdge()
 
         setContent {
-            GhostchatTheme {
-                val auth = FirebaseAuth.getInstance()
-                val context = LocalContext.current
-                val activity = context as? Activity
-
-                val startScreen = if (auth.currentUser != null && auth.currentUser!!.isEmailVerified) "list" else "auth"
-                var currentScreen by remember { mutableStateOf(startScreen) }
-                var selectedUser by remember { mutableStateOf<UserProfile?>(null) }
-
-                LaunchedEffect(activity?.intent) {
-                    val intent = activity?.intent
-                    val chatId = intent?.getStringExtra("chat_id")
-                    val chatName = intent?.getStringExtra("chat_name")
-
-                    if (chatId != null && chatName != null) {
-                        intent.removeExtra("chat_id")
-                        intent.removeExtra("chat_name")
-                        selectedUser = UserProfile(uid = chatId, username = chatName)
-                        currentScreen = "chat"
-                    }
-                }
-
-                LaunchedEffect(auth.currentUser) {
-                    if (auth.currentUser != null) {
-                        syncFcmToken()
-                    }
-                }
-
-                when (currentScreen) {
-                    "auth" -> AuthScreen(onAuthSuccess = {
-                        currentScreen = "list"
-                        syncFcmToken()
-                    })
-
-                    "list" -> ChatListScreen(
-                        database = database,
-                        onUserClick = { user ->
-                            selectedUser = user
-                            currentScreen = "chat"
-                        },
-                        onSettingsClick = { currentScreen = "settings" }
-                    )
-
-                    "chat" -> ChatScreen(
-                        database = database,
-                        recipientId = selectedUser?.uid ?: "",
-                        recipientName = selectedUser?.username ?: stringResource(R.string.unknown_ghost),
-                        onBack = { currentScreen = "list" }
-                    )
-
-                    "settings" -> SettingsScreen(
-                        database = database,
-                        onBack = { currentScreen = "list" },
-                        onLogout = {
-                            updateOnlineStatus(System.currentTimeMillis().toString())
-                            auth.signOut()
-                            currentScreen = "auth"
-                        }
-                    )
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = GhostTheme.accentColor,
+                    background = GhostTheme.backgroundColor,
+                    surface = Color(0xFF0A0A0A),
+                    onBackground = Color.White,
+                    onSurface = Color.White
+                )
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = GhostTheme.backgroundColor
+                ) {
+                    // ✅ Передаём keyManager И флаг готовности ключей в приложение
+                    val keysReady by keysReadyState
+                    GhostChatApp(database = database, keyManager = keyManager, keysReady = keysReady)
                 }
             }
-        }
-    }
-
-    private fun syncFcmToken() {
-        val myId = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-            FirebaseDatabase.getInstance().getReference("users")
-                .child(myId)
-                .child("fcmToken")
-                .setValue(token)
         }
     }
 
@@ -137,10 +113,491 @@ class MainActivity : ComponentActivity() {
 
     private fun updateOnlineStatus(status: String) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        FirebaseDatabase.getInstance()
-            .getReference("users")
-            .child(uid)
-            .child("status")
-            .setValue(status)
+        FirebaseDatabase.getInstance().getReference("users")
+            .child(uid).child("status").setValue(status)
     }
+}
+
+/**
+ * Модель данных для входящих звонков
+ */
+data class IncomingCallData(
+    val callId: String,
+    val callerId: String,
+    val callerName: String,
+    val callerImage: String? = null,
+    val offerSdp: String,
+    val isVideoCall: Boolean
+)
+
+/**
+ * ГЛАВНОЕ ПРИЛОЖЕНИЕ С WEBRTC ИНТЕГРАЦИЕЙ
+ */
+@Composable
+fun GhostChatApp(
+    database: AppDatabase,
+    // ✅ ДОБАВЛЕНО: keyManager прокидывается вниз к ChatScreen
+    keyManager: GhostKeyManager,
+    // ✅ ДОБАВЛЕНО: true только когда ensureKeysExist() завершился.
+    // Пока false — держим splash, чтобы ChatScreen физически не мог
+    // вызвать encryptMessage без identity-ключа (фикс краша createInitiatorSession).
+    keysReady: Boolean
+) {
+    val auth = FirebaseAuth.getInstance()
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val myUserId = auth.currentUser?.uid ?: ""
+
+    if (!keysReady) {
+        androidx.compose.foundation.layout.Box(
+            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            androidx.compose.material3.CircularProgressIndicator(
+                color = androidx.compose.ui.graphics.Color(0xFF00FFCC)
+            )
+        }
+        return
+    }
+
+    // WebRTC Manager
+    val webRTCManager = remember(myUserId) {
+        if (myUserId.isNotEmpty()) {
+            WebRTCManager(context, myUserId)
+        } else null
+    }
+
+    // Состояние навигации
+    val startScreen = if (auth.currentUser != null && auth.currentUser!!.isEmailVerified) {
+        "list"
+    } else {
+        "auth"
+    }
+
+    var currentScreen by remember { mutableStateOf(startScreen) }
+    var selectedUser by remember { mutableStateOf<UserProfile?>(null) }
+    var showExitDialog by remember { mutableStateOf(false) }
+    var incomingCallData by remember { mutableStateOf<IncomingCallData?>(null) }
+
+    // Запрос разрешений для звонков
+    var permissionsGranted by remember { mutableStateOf(false) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        permissionsGranted = allGranted
+
+        if (allGranted) {
+            Log.d("MainActivity", "Permissions granted, initializing WebRTC")
+            webRTCManager?.initialize()
+        } else {
+            Log.e("MainActivity", "Permissions denied")
+            Toast.makeText(
+                context,
+                "Для звонков нужны разрешения на камеру и микрофон",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // Инициализация WebRTC после входа
+    LaunchedEffect(auth.currentUser, webRTCManager) {
+        if (auth.currentUser != null && webRTCManager != null && !permissionsGranted) {
+            Log.d("MainActivity", "Requesting permissions...")
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.CAMERA,
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.MODIFY_AUDIO_SETTINGS
+                )
+            )
+        }
+    }
+
+    // Очистка WebRTC при выходе
+    DisposableEffect(webRTCManager) {
+        onDispose {
+            Log.d("MainActivity", "Disposing WebRTC")
+            webRTCManager?.dispose()
+        }
+    }
+
+    // Прослушивание входящих звонков
+    DisposableEffect(myUserId, webRTCManager) {
+        if (myUserId.isEmpty() || webRTCManager == null) {
+            return@DisposableEffect onDispose { }
+        }
+
+        val callsRef = FirebaseDatabase.getInstance()
+            .getReference("calls")
+            .child(myUserId)
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                for (callSnapshot in snapshot.children) {
+                    val type = callSnapshot.child("type").getValue(String::class.java)
+                    val from = callSnapshot.child("from").getValue(String::class.java)
+                    val callId = callSnapshot.child("callId").getValue(String::class.java)
+                    val sdp = callSnapshot.child("sdp").getValue(String::class.java)
+                    val isVideoCall = callSnapshot.child("isVideoCall")
+                        .getValue(Boolean::class.java) ?: false
+
+                    if (type == "offer" &&
+                        from != null &&
+                        from != myUserId &&
+                        callId != null &&
+                        sdp != null
+                    ) {
+                        Log.d("MainActivity", "Incoming call from $from (video: $isVideoCall)")
+
+                        val safeFrom: String = from
+                        val safeCallId: String = callId
+                        val safeSdp: String = sdp
+
+                        FirebaseDatabase.getInstance()
+                            .getReference("users")
+                            .child(safeFrom)
+                            .get()
+                            .addOnSuccessListener { userSnapshot ->
+                                val callerName = userSnapshot.child("username")
+                                    .getValue(String::class.java) ?: "Unknown"
+                                val callerImage = userSnapshot.child("profileImage")
+                                    .getValue(String::class.java)
+
+                                incomingCallData = IncomingCallData(
+                                    callId = safeCallId,
+                                    callerId = safeFrom,
+                                    callerName = callerName,
+                                    callerImage = callerImage,
+                                    offerSdp = safeSdp,
+                                    isVideoCall = isVideoCall
+                                )
+
+                                currentScreen = "incoming_call"
+                            }
+                    }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e("MainActivity", "Call listener error: ${error.message}")
+            }
+        }
+
+        callsRef.addValueEventListener(listener)
+
+        onDispose {
+            callsRef.removeEventListener(listener)
+        }
+    }
+
+    // Deep links из уведомлений
+    LaunchedEffect(activity?.intent) {
+        val intent = activity?.intent
+        val chatId = intent?.getStringExtra("chat_id")
+        val chatName = intent?.getStringExtra("chat_name")
+
+        if (chatId != null && chatName != null) {
+            intent.removeExtra("chat_id")
+            intent.removeExtra("chat_name")
+            selectedUser = UserProfile(uid = chatId, username = chatName)
+            currentScreen = "chat"
+        }
+    }
+
+    // Синхронизация FCM токена
+    LaunchedEffect(auth.currentUser) {
+        if (auth.currentUser != null) {
+            syncFcmToken()
+        }
+    }
+
+    // Диалог подтверждения выхода
+    if (showExitDialog) {
+        ExitConfirmationDialog(
+            onConfirm = { activity?.finish() },
+            onDismiss = { showExitDialog = false }
+        )
+    }
+
+    // НАВИГАЦИЯ
+    when (currentScreen) {
+        "auth" -> {
+            BackHandler { showExitDialog = true }
+            AuthScreen(onAuthSuccess = {
+                currentScreen = "list"
+                syncFcmToken()
+            })
+        }
+
+        "list" -> {
+            BackHandler { showExitDialog = true }
+            ChatListScreen(
+                database = database,
+                onUserClick = { user ->
+                    selectedUser = user
+                    currentScreen = "chat"
+                },
+                onSettingsClick = { currentScreen = "settings" }
+            )
+        }
+
+        "chat" -> {
+            BackHandler {
+                currentScreen = "list"
+                selectedUser = null
+            }
+
+            ChatScreen(
+                database = database,
+                // ✅ ДОБАВЛЕНО: keyManager передаётся в ChatScreen
+                keyManager = keyManager,
+                recipientId = selectedUser?.uid ?: "",
+                recipientName = selectedUser?.username ?: stringResource(R.string.unknown_ghost),
+                onBack = {
+                    currentScreen = "list"
+                    selectedUser = null
+                },
+                onVideoCall = {
+                    if (!permissionsGranted) {
+                        Toast.makeText(
+                            context,
+                            "Нужны разрешения на камеру и микрофон",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        permissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.CAMERA,
+                                Manifest.permission.RECORD_AUDIO
+                            )
+                        )
+                        return@ChatScreen
+                    }
+
+                    webRTCManager?.startCall(
+                        recipientId = selectedUser?.uid ?: "",
+                        isVideoCall = true,
+                        onSuccess = {
+                            Log.d("MainActivity", "Video call started")
+                            currentScreen = "call"
+                        },
+                        onError = { error ->
+                            Log.e("MainActivity", "Call failed: $error")
+                            Toast.makeText(
+                                context,
+                                "Не удалось начать звонок: $error",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    )
+                },
+                onAudioCall = {
+                    if (!permissionsGranted) {
+                        Toast.makeText(
+                            context,
+                            "Нужны разрешения на микрофон",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        permissionLauncher.launch(
+                            arrayOf(Manifest.permission.RECORD_AUDIO)
+                        )
+                        return@ChatScreen
+                    }
+
+                    webRTCManager?.startCall(
+                        recipientId = selectedUser?.uid ?: "",
+                        isVideoCall = false,
+                        onSuccess = {
+                            Log.d("MainActivity", "Audio call started")
+                            currentScreen = "call"
+                        },
+                        onError = { error ->
+                            Log.e("MainActivity", "Call failed: $error")
+                            Toast.makeText(
+                                context,
+                                "Не удалось начать звонок: $error",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    )
+                }
+            )
+        }
+
+        // ЭКРАН ВХОДЯЩЕГО ЗВОНКА
+        "incoming_call" -> {
+            BackHandler {
+                incomingCallData?.let { callData ->
+                    FirebaseDatabase.getInstance()
+                        .getReference("calls")
+                        .child(myUserId)
+                        .child(callData.callId)
+                        .removeValue()
+                }
+                incomingCallData = null
+                currentScreen = "list"
+            }
+
+            incomingCallData?.let { callData ->
+                IncomingCallScreen(
+                    callerName = callData.callerName,
+                    callerImage = callData.callerImage,
+                    isVideoCall = callData.isVideoCall,
+                    callId = callData.callId,
+                    callerId = callData.callerId,
+                    offerSdp = callData.offerSdp,
+                    onAccept = {
+                        if (!permissionsGranted) {
+                            Toast.makeText(
+                                context,
+                                "Нужны разрешения",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@IncomingCallScreen
+                        }
+
+                        webRTCManager?.answerCall(
+                            callId = callData.callId,
+                            callerId = callData.callerId,
+                            offerSdp = callData.offerSdp,
+                            isVideoCall = callData.isVideoCall,
+                            onSuccess = {
+                                Log.d("MainActivity", "Call answered")
+                                selectedUser = UserProfile(
+                                    uid = callData.callerId,
+                                    username = callData.callerName
+                                )
+                                currentScreen = "call"
+                                incomingCallData = null
+                            },
+                            onError = { error ->
+                                Log.e("MainActivity", "Answer failed: $error")
+                                Toast.makeText(
+                                    context,
+                                    "Не удалось ответить: $error",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                currentScreen = "list"
+                                incomingCallData = null
+                            }
+                        )
+                    },
+                    onDecline = {
+                        FirebaseDatabase.getInstance()
+                            .getReference("calls")
+                            .child(myUserId)
+                            .child(callData.callId)
+                            .removeValue()
+
+                        incomingCallData = null
+                        currentScreen = "list"
+                    }
+                )
+            }
+        }
+
+        // ЭКРАН АКТИВНОГО ЗВОНКА
+        "call" -> {
+            BackHandler {
+                webRTCManager?.endCall()
+                currentScreen = "list"
+                selectedUser = null
+            }
+
+            webRTCManager?.let { manager ->
+                CallScreen(
+                    webRTCManager = manager,
+                    recipientName = selectedUser?.username ?: "Unknown",
+                    onEndCall = {
+                        Log.d("MainActivity", "Ending call")
+                        manager.endCall()
+                        currentScreen = "list"
+                        selectedUser = null
+                    }
+                )
+            }
+        }
+
+        "settings" -> {
+            BackHandler { currentScreen = "list" }
+            SettingsScreen(
+                database = database,
+                onBack = { currentScreen = "list" },
+                onLogout = {
+                    updateOnlineStatus(System.currentTimeMillis().toString())
+                    auth.signOut()
+                    webRTCManager?.dispose()
+                    currentScreen = "auth"
+                    selectedUser = null
+                }
+            )
+        }
+    }
+}
+
+/**
+ * ДИАЛОГ ПОДТВЕРЖДЕНИЯ ВЫХОДА
+ */
+@Composable
+fun ExitConfirmationDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Выход из GhostChat",
+                color = Color.White
+            )
+        },
+        text = {
+            Text(
+                text = "Вы действительно хотите выйти из приложения?",
+                color = Color.Gray
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color(0xFF00FFCC)
+                )
+            ) {
+                Text("Выйти")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color.White
+                )
+            ) {
+                Text("Отмена")
+            }
+        },
+        containerColor = Color(0xFF1A1A1A),
+        iconContentColor = Color(0xFF00FFCC),
+        titleContentColor = Color.White,
+        textContentColor = Color.Gray
+    )
+}
+
+/**
+ * ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+ */
+private fun syncFcmToken() {
+    val myId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+    FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+        FirebaseDatabase.getInstance().getReference("users")
+            .child(myId).child("fcmToken").setValue(token)
+    }
+}
+
+private fun updateOnlineStatus(status: String) {
+    val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+    FirebaseDatabase.getInstance().getReference("users")
+        .child(uid).child("status").setValue(status)
 }

@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,7 +67,7 @@ fun ChatListScreen(
 
     val activeChats by messageDao.getAllLastMessages().collectAsState(initial = emptyList())
 
-    // Change- Улучшенная логика поиска (UID + ProfileID)
+    // Улучшенная логика поиска (UID + ProfileID)
     LaunchedEffect(searchQuery) {
         val query = searchQuery.trim()
         if (query.isNotEmpty()) {
@@ -160,7 +161,7 @@ fun ChatListScreen(
             }
 
             LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(bottom = 100.dp)) {
-                // LLM APDED: Отображение результата поиска
+                // Отображение результата поиска
                 searchResult?.let { profile ->
                     item {
                         Text("Результат поиска:", color = globalAccent, fontSize = 12.sp, modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp))
@@ -174,7 +175,10 @@ fun ChatListScreen(
                 if (searchQuery.isEmpty()) {
                     items(activeChats.sortedByDescending { it.timestamp }, key = { it.chatId }) { msg ->
                         ActiveChatRow(msg, globalAccent, myId, messageDao) {
-                            val peerId = if (msg.chatId.startsWith(myId)) msg.chatId.substringAfter("${myId}_") else msg.chatId.substringBefore("_$myId")
+                            val peerId = if (msg.chatId.startsWith(myId))
+                                msg.chatId.substringAfter("${myId}_")
+                            else
+                                msg.chatId.substringBefore("_$myId")
                             onUserClick(UserProfile(uid = peerId))
                         }
                     }
@@ -189,9 +193,21 @@ fun ChatListScreen(
         }
 
         // Bottom Navigation
-        Box(Modifier.fillMaxWidth().align(Alignment.BottomCenter).background(backgroundColor.copy(alpha = 0.8f)).padding(bottom = 16.dp, top = 8.dp)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .background(backgroundColor.copy(alpha = 0.8f))
+                .padding(bottom = 16.dp, top = 8.dp)
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp).clip(RoundedCornerShape(28.dp)).background(Color.White.copy(0.05f)).border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(28.dp)).padding(vertical = 12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 40.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Color.White.copy(0.05f))
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(28.dp))
+                    .padding(vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceAround,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -204,10 +220,19 @@ fun ChatListScreen(
 
 @Composable
 fun SearchResultRow(profile: UserProfile, accent: Color, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(54.dp).clip(CircleShape).background(Color.White.copy(0.05f)).border(1.dp, accent.copy(0.5f), CircleShape)) {
-            if (profile.profileImage.isNotEmpty()) AsyncImage(profile.profileImage, null, Modifier.fillMaxSize().clip(CircleShape), contentScale = ContentScale.Crop)
-            else Text("👻", modifier = Modifier.align(Alignment.Center), fontSize = 24.sp)
+    Row(
+        Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(54.dp).clip(CircleShape)
+                .background(Color.White.copy(0.05f))
+                .border(1.dp, accent.copy(0.5f), CircleShape)
+        ) {
+            if (profile.profileImage.isNotEmpty())
+                AsyncImage(profile.profileImage, null, Modifier.fillMaxSize().clip(CircleShape), contentScale = ContentScale.Crop)
+            else
+                Text("👻", modifier = Modifier.align(Alignment.Center), fontSize = 24.sp)
         }
         Column(Modifier.padding(start = 16.dp)) {
             Text(profile.username, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -219,37 +244,111 @@ fun SearchResultRow(profile: UserProfile, accent: Color, onClick: () -> Unit) {
 }
 
 @Composable
-fun BottomNavItem(label: String, icon: ImageVector, color: Color, isSelected: Boolean, onClick: () -> Unit) {
+fun BottomNavItem(
+    label: String,
+    icon: ImageVector,
+    color: Color,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
     val scale by animateFloatAsState(if (isSelected) 1.15f else 1.0f, label = "")
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onClick() }.graphicsLayer(scaleX = scale, scaleY = scale)) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable { onClick() }.graphicsLayer(scaleX = scale, scaleY = scale)
+    ) {
         Icon(icon, null, tint = color, modifier = Modifier.size(26.dp))
-        Text(label, color = color, fontSize = 10.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+        Text(
+            label, color = color, fontSize = 10.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+        )
     }
 }
 
 @Composable
-fun ActiveChatRow(message: MessageEntity, accent: Color, myId: String, messageDao: MessageDao, onClick: () -> Unit) {
+fun ActiveChatRow(
+    message: MessageEntity,
+    accent: Color,
+    myId: String,
+    messageDao: MessageDao,
+    onClick: () -> Unit
+) {
     val defaultName = stringResource(R.string.ghost_user)
     val youPrefix = stringResource(R.string.you_prefix)
+
     val peerId = remember(message.chatId) {
-        if (message.chatId.startsWith(myId)) message.chatId.substringAfter("${myId}_")
-        else message.chatId.substringBefore("_$myId")
+        if (message.chatId.startsWith(myId))
+            message.chatId.substringAfter("${myId}_")
+        else
+            message.chatId.substringBefore("_$myId")
     }
 
     var liveName by remember { mutableStateOf(defaultName) }
     var livePhoto by remember { mutableStateOf("") }
-    var decryptedPreview by remember { mutableStateOf("...") }
+
+    // Изменяем тип на String? чтобы явно обрабатывать состояния "загрузка"/"ошибка"
+    var decryptedPreview by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(message.text, message.chatId) {
-        val secretKey = messageDao.getSecretKeyForChat(message.chatId)
-        if (secretKey != null) {
-            val raw = try { GhostEncryptor.decrypt(message.text, secretKey) } catch (e: Exception) { "[Ошибка ключа]" }
-            decryptedPreview = if (raw.startsWith("GHOST_IMG:")) "📷 Фотография" else raw
-        } else {
-            decryptedPreview = "Зашифровано"
-        }
-    }
+        val rawText = message.text.trim()
 
+        if (ChatUtils.isPhotoMessage(rawText)) {
+            decryptedPreview = "📷 Фотография"
+            return@LaunchedEffect
+        }
+
+
+        val secretKey = messageDao.getSecretKeyForChat(message.chatId)
+        if (secretKey == null) {
+            decryptedPreview = "Зашифровано"
+            return@LaunchedEffect
+        }
+        var decryptedPlain: String? = null
+
+        val result = withContext(Dispatchers.Default) {
+            safeDecryptSync(message, secretKey, message.chatId) { plain ->
+                // Сохраняем Нахуй
+                decryptedPlain = plain
+            }
+        }
+
+        decryptedPreview = result
+
+        // Если расшифровали через легаси — фоном обновляем в БД (тут launch работает спокойно!)
+        decryptedPlain?.let { plain ->
+            launch(Dispatchers.IO) {
+                reEncryptAndUpdate(message, plain, secretKey, message.chatId, messageDao)
+            }
+        }
+
+
+        // Фикс п.7: тяжёлая крипто-операция явно уведена с главного потока.
+        val plainText = withContext(Dispatchers.Default) {
+            try {
+                GhostCrypto.decryptMessage(rawText, secretKey, message.chatId)
+            } catch (primary: SecurityException) {
+                try {
+                    @Suppress("DEPRECATION")
+                    val legacyPlain = GhostCrypto.decryptLegacy(rawText, secretKey)
+                    android.util.Log.i("CryptoMigration", "ActiveChatRow: legacy fallback chatId_len=${message.chatId.length}")
+                    reEncryptAndUpdate(message, legacyPlain, secretKey, message.chatId, messageDao)
+                    legacyPlain
+                } catch (legacy: SecurityException) {
+                    android.util.Log.e("CryptoMigration", "ActiveChatRow: all decryption failed primary=${primary.javaClass.simpleName} legacy=${legacy.javaClass.simpleName}")
+                    "[Ошибка ключа]"
+                }
+            } catch (e: IllegalArgumentException) {
+                if (e.message?.contains("too short", ignoreCase = true) == true) rawText else "[ошибка формата]"
+            } catch (e: Exception) {
+                android.util.Log.w("ActiveChatRow", "Неизвестная ошибка расшифровки превью", e)
+                rawText.take(60) + if (rawText.length > 60) "…" else ""
+            }
+        }
+
+        decryptedPreview = plainText
+    }
+    // ────────────────────────────────────────────────────────────────
+    // Получение имени и фото собеседника (без изменений)
+    // ────────────────────────────────────────────────────────────────
     LaunchedEffect(peerId) {
         FirebaseDatabase.getInstance().getReference("users").child(peerId)
             .addValueEventListener(object : ValueEventListener {
@@ -262,23 +361,72 @@ fun ActiveChatRow(message: MessageEntity, accent: Color, myId: String, messageDa
             })
     }
 
-    val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
+    val time = remember(message.timestamp) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
+    }
 
-    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(58.dp).clip(CircleShape).background(Color.White.copy(0.05f)).border(1.dp, accent.copy(0.3f), CircleShape)) {
-            if (livePhoto.isNotEmpty()) AsyncImage(livePhoto, null, Modifier.fillMaxSize().clip(CircleShape), contentScale = ContentScale.Crop)
-            else Text("👻", modifier = Modifier.align(Alignment.Center), fontSize = 26.sp)
-        }
-        Column(Modifier.padding(start = 16.dp).weight(1f)) {
-            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-                Text(liveName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Text(time, color = Color.Gray, fontSize = 12.sp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(58.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(0.05f))
+                .border(1.dp, accent.copy(0.3f), CircleShape)
+        ) {
+            if (livePhoto.isNotEmpty()) {
+                AsyncImage(
+                    livePhoto,
+                    null,
+                    Modifier.fillMaxSize().clip(CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Text(
+                    "👻",
+                    modifier = Modifier.align(Alignment.Center),
+                    fontSize = 26.sp
+                )
             }
+        }
+
+        Column(Modifier.padding(start = 16.dp).weight(1f)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                Arrangement.SpaceBetween,
+                Alignment.CenterVertically
+            ) {
+                Text(
+                    liveName,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+                Text(
+                    time,
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+
             Text(
-                text = if (message.isFromMe) youPrefix + decryptedPreview else decryptedPreview,
-                color = if (message.currentStatus < 3 && !message.isFromMe) Color.White else Color.Gray,
-                fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                fontWeight = if (message.currentStatus < 3 && !message.isFromMe) FontWeight.Bold else FontWeight.Normal
+                text = when {
+                    decryptedPreview == null -> "Загрузка..."
+                    message.isFromMe -> youPrefix + (decryptedPreview ?: "")
+                    else -> decryptedPreview ?: " "
+                },
+                color = if (message.currentStatus < 3 && !message.isFromMe)
+                    Color.White else Color.Gray,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = if (message.currentStatus < 3 && !message.isFromMe)
+                    FontWeight.Bold else FontWeight.Normal
             )
         }
     }
