@@ -10,3 +10,4 @@ out/
 # Локальные переменные и ключи
 .env
 local.properties
+app/google-services.json
