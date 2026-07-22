@@ -1,0 +1,10 @@
+## Скопируй в local.properties и заполни значения.
+## local.properties не коммитить в git.
+
+sdk.dir=C\:\\Users\\USER\\AppData\\Local\\Android\\Sdk
+
+# ImgBB API key: https://api.imgbb.com/
+IMGBB_API_KEY=
+
+# URL Realtime Database (из консоли Firebase)
+FIREBASE_DATABASE_URL=https://ghostchat-xxxxx-default-rtdb.europe-west1.firebasedatabase.app

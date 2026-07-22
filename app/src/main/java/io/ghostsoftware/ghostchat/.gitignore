@@ -1,0 +1,12 @@
+# Сборка Gradle
+build/
+.gradle/
+
+# Настройки IntelliJ IDEA / Android Studio
+.idea/
+*.iml
+out/
+
+# Локальные переменные и ключи
+.env
+local.properties

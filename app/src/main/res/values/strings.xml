@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GhostChat</string>
+
+    <string name="status_online">в сети</string>
+    <string name="status_offline">не в сети</string>
+    <string name="online">В сети</string>
+    <string name="offline">Не в сети</string>
+    <string name="typing">Печатает…</string>
+
+    <string name="input_hint">Ghost…</string>
+    <string name="unknown_ghost">Неизвестный пользователь</string>
+    <string name="ghost_user">Ghost User</string>
+    <string name="you_prefix">Вы: </string>
+    <string name="new_message">Новое сообщение</string>
+    <string name="encrypted_message_placeholder">🔒 Зашифрованное сообщение</string>
+    <string name="error_decryption">Не удалось расшифровать сообщение</string>
+
+    <string name="notification_title">GhostChat</string>
+    <string name="notification_masked">Новое уведомление</string>
+    <string name="confidential_message">Конфиденциальное сообщение</string>
+    <string name="security_alert">⚠️ Предупреждение безопасности</string>
+    <string name="security_alert_message">Получено непроверенное сообщение. Возможна попытка атаки.</string>
+
+    <string name="search_hint">Search by Ghost ID…</string>
+    <string name="delete_title">Удаление</string>
+    <string name="delete_message">Удалить сообщение?</string>
+    <string name="delete_for_all">У всех</string>
+    <string name="delete_for_me">У себя</string>
+
+    <string name="login">Войти</string>
+    <string name="register">Регистрация</string>
+    <string name="email">Email</string>
+    <string name="password">Пароль</string>
+    <string name="username">Имя пользователя</string>
+    <string name="verify_email">Verify your email!</string>
+    <string name="error_prefix">Error: %s</string>
+    <string name="name_required">Name is required</string>
+    <string name="identity_created">Identity Created. Verify Email!</string>
+    <string name="no_identity_register">No identity? Click to Register</string>
+    <string name="have_account_login">Have account? Click to Login</string>
+
+    <string name="settings_title">Настройки</string>
+    <string name="security_level_low">Низкий</string>
+    <string name="security_level_mid">Средний</string>
+    <string name="security_level_ultra">Ультра</string>
+
+    <string name="action_send">Отправить</string>
+    <string name="action_cancel">Отмена</string>
+    <string name="action_delete">Удалить</string>
+    <string name="action_copy">Копировать</string>
+    <string name="action_edit">Редактировать</string>
+    <string name="action_reply">Ответить</string>
+    <string name="action_forward">Переслать</string>
+    <string name="action_close">Закрыть</string>
+    <string name="action_download">Скачать</string>
+
+    <string name="error_generic">Произошла ошибка</string>
+    <string name="error_network">Проверьте подключение к интернету</string>
+    <string name="error_auth">Ошибка аутентификации</string>
+    <string name="success_message_sent">Сообщение отправлено</string>
+
+    <string name="dialog_confirm">Подтвердить</string>
+    <string name="dialog_yes">Да</string>
+    <string name="dialog_no">Нет</string>
+
+    <string name="backup_create">Создать бэкап</string>
+    <string name="backup_restore">Восстановить бэкап</string>
+    <string name="backup_password">Пароль бэкапа</string>
+    <string name="success_backup_created">Бэкап создан</string>
+    <string name="success_backup_restored">Бэкап восстановлен</string>
+
+    <string name="download_notification_title">GhostChat_Image</string>
+    <string name="download_notification_desc">Сохранение в галерею…</string>
+
+    <string name="self_destruct_30s">30 секунд</string>
+    <string name="self_destruct_1m">1 минута</string>
+    <string name="self_destruct_5m">5 минут</string>
+    <string name="self_destruct_1h">1 час</string>
+    <string name="self_destruct_24h">24 часа</string>
+
+    <string name="biometric_title">Вход в GhostChat</string>
+    <string name="biometric_subtitle">Подтвердите свою личность</string>
+    <string name="biometric_description">Используйте отпечаток пальца или Face ID</string>
+
+    <string name="key_verification_title">Верификация ключей</string>
+    <string name="key_verification_description">Сравните отпечатки ключей для защиты от MITM атак</string>
+    <string name="keys_match">Ключи совпадают ✓</string>
+    <string name="keys_mismatch">Ключи не совпадают</string>
+    <string name="contact_verified">Контакт верифицирован</string>
+</resources>
