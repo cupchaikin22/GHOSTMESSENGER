@@ -20,12 +20,15 @@ package io.ghostsoftware.ghostchat
 
 import android.content.Context
 import android.util.Log
+import com.ghostsoftware.ghostchat.crypto.GhostCryptoUtils
+import com.ghostsoftware.ghostchat.crypto.GhostCryptoUtils.computeSharedSecretSafe
 import com.google.crypto.tink.subtle.X25519
 import com.google.crypto.tink.subtle.XChaCha20Poly1305
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+
 
 private const val TAG = "GhostSession"
 
@@ -298,7 +301,7 @@ class GhostSessionManager(
 
         val myRatchetPriv = X25519.generatePrivateKey()
         val myRatchetPub  = X25519.publicFromPrivate(myRatchetPriv)
-        val bootstrapDh   =computeSharedSecretSafe(myRatchetPriv, aliceFirstRatchet)
+        val bootstrapDh   = GhostCryptoUtils.computeSharedSecretSafe(myRatchetPriv, aliceFirstRatchet)
         val (newRoot, mySendingChain) = GhostRatchet.kdfRootChain(x3dhRoot, bootstrapDh)
 
         val myRatchetPrivWrapped = GhostKeyStore.wrapKey(myRatchetPriv, GhostKeyStore.ALIAS_RATCHET_WRAP)
@@ -359,14 +362,7 @@ class GhostSessionManager(
         )
     }
 
-    fun computeSharedSecretSafe(priv: ByteArray, pub: ByteArray): ByteArray {
-        // ВНУТРИ ВЫЗЫВАЕМ X25519, А НЕ САМУ СЕБЯ!
-        val shared = X25519.computeSharedSecret(priv, pub)
-        require(!shared.all { it == 0.toByte() }) {
-            "Rejected contributory-behavior shared secret (low-order point)"
-        }
-        return shared
-    }
+
 
     // ========================================================
     // TOFU

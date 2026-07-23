@@ -7,6 +7,8 @@ package io.ghostsoftware.ghostchat
 
 import android.util.Base64
 import android.util.Log
+import com.ghostsoftware.ghostchat.crypto.GhostCryptoUtils
+import com.ghostsoftware.ghostchat.crypto.GhostCryptoUtils.computeSharedSecretSafe
 import com.google.crypto.tink.subtle.Ed25519Sign
 import com.google.crypto.tink.subtle.Ed25519Verify
 import com.google.crypto.tink.subtle.Hkdf
@@ -16,13 +18,7 @@ import java.security.SecureRandom
 import javax.crypto.AEADBadTagException
 
 
-fun computeSharedSecretSafe(priv: ByteArray, pub: ByteArray): ByteArray {
-    val shared = X25519.computeSharedSecret(priv, pub)
-    require(!shared.all { it == 0.toByte() }) {
-        "Rejected contributory-behavior shared secret (low-order point)"
-    }
-    return shared
-}
+
 data class GhostKeyPair(
     val privateKey: ByteArray,
     val publicKey: ByteArray
@@ -349,7 +345,7 @@ object GhostCrypto {
             val ephPriv = X25519.generatePrivateKey()
             val ephPub  = X25519.publicFromPrivate(ephPriv)
 
-            val sharedSecret = computeSharedSecretSafe(ephPriv, recipientPublicKey)
+            val sharedSecret = GhostCryptoUtils.computeSharedSecretSafe(ephPriv, recipientPublicKey)
             val wrapKey = Hkdf.computeHkdf(
                 HKDF_ALG,
                 sharedSecret,
@@ -395,7 +391,7 @@ object GhostCrypto {
             val ephPub     = bundle.copyOfRange(0, KEY_SIZE)
             val encChatKey = bundle.copyOfRange(KEY_SIZE, bundle.size)
 
-            val sharedSecret = computeSharedSecretSafe(myPrivateKey, ephPub)
+            val sharedSecret = GhostCryptoUtils.computeSharedSecretSafe(myPrivateKey, ephPub)
             val wrapKey = Hkdf.computeHkdf(
                 HKDF_ALG,
                 sharedSecret,

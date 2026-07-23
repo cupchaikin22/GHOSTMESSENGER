@@ -28,6 +28,8 @@ package io.ghostsoftware.ghostchat
 // ============================================================
 
 import android.util.Log
+import com.ghostsoftware.ghostchat.crypto.GhostCryptoUtils
+import com.ghostsoftware.ghostchat.crypto.GhostCryptoUtils.computeSharedSecretSafe
 import com.google.crypto.tink.subtle.Hkdf
 import com.google.crypto.tink.subtle.X25519
 import javax.crypto.Mac
@@ -278,13 +280,13 @@ object GhostRatchet {
         require(theirNewPubKey.size == 32) { "Their pub key must be 32 bytes" }
 
         // Шаг 1-2: Receiving chain
-        val dh1 = computeSharedSecretSafe(myCurrentPrivKey, theirNewPubKey)
+        val dh1 = GhostCryptoUtils.computeSharedSecretSafe(myCurrentPrivKey, theirNewPubKey)
         val (newRoot1, newReceivingChain) = kdfRootChain(rootKey, dh1)
 
         // Шаг 3-5: Sending chain с новым эфемерным ключом
         val myNewPrivKey = X25519.generatePrivateKey()
         val myNewPubKey  = X25519.publicFromPrivate(myNewPrivKey)
-        val dh2 = computeSharedSecretSafe(myNewPrivKey, theirNewPubKey)
+        val dh2 = GhostCryptoUtils.computeSharedSecretSafe(myNewPrivKey, theirNewPubKey)
         val (newRoot2, newSendingChain) = kdfRootChain(newRoot1, dh2)
 
         Log.d(TAG, "DH ratchet step completed — new chains established")
@@ -348,9 +350,9 @@ object GhostRatchet {
         val aliceEphemPriv = X25519.generatePrivateKey()
         val aliceEphemPub  = X25519.publicFromPrivate(aliceEphemPriv)
 
-        val dh1 = computeSharedSecretSafe(aliceIdentityPriv, bobSignedPreKey)
-        val dh2 = computeSharedSecretSafe(aliceEphemPriv, bobIdentityPub)
-        val dh3 = computeSharedSecretSafe(aliceEphemPriv, bobSignedPreKey)
+        val dh1 = GhostCryptoUtils.computeSharedSecretSafe(aliceIdentityPriv, bobSignedPreKey)
+        val dh2 = GhostCryptoUtils.computeSharedSecretSafe(aliceEphemPriv, bobIdentityPub)
+        val dh3 = GhostCryptoUtils.computeSharedSecretSafe(aliceEphemPriv, bobSignedPreKey)
 
         // Конкатенируем и прогоняем через HKDF с domain info
         val inputKeyMaterial = dh1 + dh2 + dh3
@@ -381,9 +383,9 @@ object GhostRatchet {
         aliceEphemPub: ByteArray
     ): Pair<ByteArray, ByteArray> {
         // Зеркальные DH-операции
-        val dh1 = computeSharedSecretSafe(bobSignedPreKeyPriv, aliceIdentityPub)
-        val dh2 = computeSharedSecretSafe(bobIdentityPriv, aliceEphemPub)
-        val dh3 = computeSharedSecretSafe(bobSignedPreKeyPriv, aliceEphemPub)
+        val dh1 = GhostCryptoUtils.computeSharedSecretSafe(bobSignedPreKeyPriv, aliceIdentityPub)
+        val dh2 = GhostCryptoUtils.computeSharedSecretSafe(bobIdentityPriv, aliceEphemPub)
+        val dh3 = GhostCryptoUtils.computeSharedSecretSafe(bobSignedPreKeyPriv, aliceEphemPub)
 
         val inputKeyMaterial = dh1 + dh2 + dh3
         val masterSecret = Hkdf.computeHkdf(
@@ -436,11 +438,9 @@ object GhostRatchet {
                 seqNumBytes + ratchetPubKey
     }
 
-    fun computeSharedSecretSafe(priv: ByteArray, pub: ByteArray): ByteArray {
-        val shared = computeSharedSecretSafe(priv, pub)
-        require(!shared.all { it == 0.toByte() }) { "Rejected contributory-behavior shared secret (low-order point)" }
-        return shared
-    }
+
+
+
     fun checkAndUpdateReplayWindow(
         seqNum: Int,
         windowStart: Int,

@@ -123,7 +123,7 @@ object AppSessionManager {
 
         // 2. Протокольное (не идентификационное!) состояние — обнуляем полностью.
         try {
-            database.ratchetSessionDao().deleteAllSessions()
+            ///database.ratchetSessionDao().deleteAllSessions()
             Log.i(TAG, "performLogout: ratchet_sessions cleared")
         } catch (e: Exception) {
             Log.e(TAG, "performLogout: failed to clear ratchet sessions: ${e.javaClass.simpleName}")

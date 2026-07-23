@@ -17,6 +17,6 @@ data class UserProfile(
     var isGhostMode: Boolean = false,
 
     var fcmToken: String? = null,
-    var status: String? = null,
+    var status: Any? = null,
     var keys: Map<String, Any>? = null
 )
