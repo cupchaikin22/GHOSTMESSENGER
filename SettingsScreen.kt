@@ -33,6 +33,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -201,7 +202,23 @@ fun SettingsScreen(database: AppDatabase, onBack: () -> Unit, onLogout: () -> Un
             }
             item {
                 GhostItem(Icons.Default.DeleteForever, "Panic Button", "Wipe all local data", Color.Red, true) {
-                    scope.launch(Dispatchers.IO) { database.clearAllTables() }
+                    scope.launch(Dispatchers.IO) {
+
+                        GhostKeyManager(context).clearKeys()
+
+
+                        database.clearAllTables()
+
+
+                        FirebaseDatabase.getInstance().getReference("users").child(uid).child("sessionResetToken").setValue(System.currentTimeMillis())
+
+
+                        AppSessionManager.performLogout(database)
+
+                        withContext(Dispatchers.Main) {
+                            onLogout()
+                        }
+                    }
                 }
             }
 

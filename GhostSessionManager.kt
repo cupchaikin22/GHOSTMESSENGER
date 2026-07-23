@@ -90,7 +90,6 @@ class GhostSessionManager(
         val updatedSession = session.copy(
             sendingChainKey         = GhostCrypto.run { step.nextChainKey.toBase64() },
             sendingSeqNum           = step.seqNum + 1,
-            pendingX3dhEphemeralPub = null,
             lastActivityAt          = System.currentTimeMillis()
         )
         sessionDao.saveSession(updatedSession)
@@ -354,6 +353,7 @@ class GhostSessionManager(
             sendingChainKey         = GhostCrypto.run { dhResult.newSendingChainKey.toBase64() },
             myRatchetPrivKeyWrapped = newPrivWrapped,
             myRatchetPubKey         = GhostCrypto.run { dhResult.myNewPubKey.toBase64() },
+            pendingX3dhEphemeralPub = null,
             theirRatchetPubKey      = newTheirPubKeyBase64,
             skippedMessageKeys      = "{}"
         )
@@ -370,9 +370,8 @@ class GhostSessionManager(
             val snapshot = ref.get().await()
             val x25519  = snapshot.child("x25519").getValue(String::class.java) ?: return@withContext null
             val ed25519 = snapshot.child("ed25519").getValue(String::class.java) ?: return@withContext null
-            val combined = GhostCrypto.run { x25519.fromBase64() + ed25519.fromBase64() }
-            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(combined)
-            hash.take(16).joinToString(":") { "%02X".format(it) }
+
+            computeFingerprintFromKeys(x25519, ed25519)
         } catch (e: Exception) {
             Log.e(TAG, "getContactFingerprint failed: ${e.javaClass.simpleName}")
             null
@@ -395,7 +394,8 @@ class GhostSessionManager(
             storedFingerprint == currentFingerprint && session.isTofuVerified -> TofuStatus.VERIFIED
             storedFingerprint == currentFingerprint -> TofuStatus.TRUSTED_UNVERIFIED
             else -> {
-                Log.e(TAG, "TOFU MISMATCH: stored=$storedFingerprint current=$currentFingerprint")
+                Log.w(TAG, "REAL TOFU MISMATCH: stored=$storedFingerprint current=$currentFingerprint")
+                // Уведомляем систему, что ключ собеседника РЕАЛЬНО изменился (например, он переустановил приложение)
                 TofuStatus.KEY_CHANGED
             }
         }
@@ -414,9 +414,7 @@ class GhostSessionManager(
                     .get().await()
                     .getValue(String::class.java) ?: theirX25519Pub
             }
-            val combined = GhostCrypto.run { theirX25519Pub.fromBase64() + ed25519Pub.fromBase64() }
-            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(combined)
-            GhostCrypto.run { hash.toBase64() }
+            computeFingerprintFromKeys(theirX25519Pub, ed25519Pub)
         } catch (e: Exception) {
             Log.w(TAG, "computeIdentityFingerprint failed: ${e.javaClass.simpleName}")
             ""
@@ -440,6 +438,11 @@ class GhostSessionManager(
             Log.w(TAG, "deserializeSkippedKeys failed: ${e.javaClass.simpleName}")
         }
         return result
+    }
+    private fun computeFingerprintFromKeys(x25519Base64: String, ed25519Base64: String): String {
+        val combined = GhostCrypto.run { x25519Base64.fromBase64() + ed25519Base64.fromBase64() }
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(combined)
+        return GhostCrypto.run { hash.toBase64() }
     }
 
     enum class TofuStatus { VERIFIED, TRUSTED_UNVERIFIED, FIRST_TIME, KEY_CHANGED, KEY_UNAVAILABLE, NO_SESSION }

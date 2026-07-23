@@ -24,13 +24,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
@@ -54,123 +50,40 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.random.Random
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 
 // ══════════════════════════════════════════════════════════
-// PREMIUM GLASS DESIGN SYSTEM v2 (без изменений)
+// FLAT BLACK DESIGN SYSTEM
+//
+// Никаких Brush-градиентов, drawBehind-эффектов (grain/vignette),
+// никакой alpha-полупрозрачности на topBar/bottomBar (раньше это
+// давало эффект "стекла" поверх контента). Плоские сплошные цвета,
+// как в Telegram / Signal / Nothing OS.
 // ══════════════════════════════════════════════════════════
 
-private object GlassDesign {
+private object FlatDesign {
 
-    const val TOPBAR_ALPHA = 0.58f
-    const val BOTTOMBAR_ALPHA = 0.62f
-    const val DIALOG_ALPHA = 0.74f
-    const val FLOATING_ALPHA = 0.52f
+    /** Фон экрана — если юзер не задал кастомный цвет, чистый чёрный */
+    fun screenBackground(base: Color): Color =
+        if (base == Color.Unspecified) Color.Black else base
 
-    fun glassColor(base: Color, alpha: Float = 0.12f): Color =
-        base.copy(alpha = alpha)
+    /** Разделительная линия topBar/bottomBar — тонкая, плоская, без градиента */
+    fun divider(isDark: Boolean): Color =
+        if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.08f)
 
-    fun glassBorder(isDark: Boolean): Color =
-        if (isDark) Color.White.copy(alpha = 0.10f)
-        else Color.Black.copy(alpha = 0.09f)
+    /** Пузырь чужого сообщения — сплошной тёмно-серый, как в Telegram/Signal */
+    fun recipientBubble(isDark: Boolean): Color =
+        if (isDark) Color(0xFF1C1C1E) else Color(0xFFEFEFF0)
 
-    fun glassBorderAccent(accent: Color): Color =
-        accent.copy(alpha = 0.20f)
+    /** Пузырь своего сообщения — сплошной accent, без прозрачности/подсветки */
+    fun myBubble(accent: Color): Color = accent
 
-    fun innerGlow(accent: Color, isDark: Boolean): Brush {
-        val peak = if (isDark) 0.055f else 0.035f
-        val base = if (isDark) 0.025f else 0.015f
-        return Brush.verticalGradient(
-            0.0f to accent.copy(alpha = peak),
-            0.15f to accent.copy(alpha = peak * 0.5f),
-            0.4f to Color.Transparent,
-            0.6f to Color.Transparent,
-            0.85f to accent.copy(alpha = base * 0.5f),
-            1.0f to accent.copy(alpha = base)
-        )
-    }
+    fun secondaryText(isDark: Boolean): Color =
+        if (isDark) Color.White.copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.45f)
 
-    fun backgroundGradient(base: Color): Brush {
-        val isDark = base.luminance() < 0.5f
-        return if (isDark) {
-            Brush.verticalGradient(
-                listOf(base, Color(0xFF0B0B0F), Color(0xFF080C10), Color(0xFF050810))
-            )
-        } else {
-            Brush.verticalGradient(
-                listOf(base, Color(0xFFF7F7FA), Color(0xFFF0F0F5))
-            )
-        }
-    }
-
-    fun bubbleShine(isMe: Boolean, accent: Color, isDark: Boolean): Brush {
-        return if (isMe) {
-            Brush.verticalGradient(
-                0.0f to Color.White.copy(alpha = 0.10f),
-                0.3f to Color.White.copy(alpha = 0.03f),
-                0.7f to Color.Transparent,
-                1.0f to Color.Black.copy(alpha = 0.04f)
-            )
-        } else {
-            val tint = if (isDark) Color.White else Color.Black
-            Brush.verticalGradient(
-                0.0f to tint.copy(alpha = 0.035f),
-                0.4f to Color.Transparent,
-                1.0f to tint.copy(alpha = 0.015f)
-            )
-        }
-    }
-
-    fun myBubbleColor(accent: Color): Color = accent.copy(alpha = 0.80f)
-
-    fun recipientBubbleColor(isDark: Boolean): Color =
-        if (isDark) Color.White.copy(alpha = 0.065f) else Color.Black.copy(alpha = 0.045f)
-
-    fun recipientBubbleBorder(isDark: Boolean): Color =
-        if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
-
-    fun avatarRingBrush(accent: Color): Brush = Brush.sweepGradient(
-        listOf(
-            accent.copy(alpha = 0.6f),
-            accent.copy(alpha = 0.3f),
-            accent.copy(alpha = 0.6f),
-            accent.copy(alpha = 0.4f),
-            accent.copy(alpha = 0.6f)
-        )
-    )
-}
-
-private fun Modifier.grainOverlay(isDark: Boolean, density: Int = 800): Modifier =
-    this.drawBehind {
-        val grainColor = if (isDark) Color.White else Color.Black
-        val rng = Random(42)
-        repeat(density) {
-            drawCircle(
-                color = grainColor.copy(alpha = rng.nextFloat() * 0.035f),
-                radius = 0.5f,
-                center = Offset(rng.nextFloat() * size.width, rng.nextFloat() * size.height)
-            )
-        }
-    }
-
-private fun DrawScope.drawVignette(isDark: Boolean, intensity: Float = 0.08f) {
-    val color = if (isDark) Color.Black else Color(0xFF1A1A2E)
-    drawRect(
-        brush = Brush.radialGradient(
-            listOf(color.copy(alpha = intensity), Color.Transparent),
-            center = Offset(0f, 0f),
-            radius = size.minDimension * 0.7f
-        ), size = size
-    )
-    drawRect(
-        brush = Brush.radialGradient(
-            listOf(color.copy(alpha = intensity * 0.6f), Color.Transparent),
-            center = Offset(size.width, size.height),
-            radius = size.minDimension * 0.7f
-        ), size = size
-    )
+    fun surfaceMuted(isDark: Boolean): Color =
+        if (isDark) Color(0xFF1C1C1E) else Color(0xFFEFEFF0)
 }
 
 @Composable
@@ -181,16 +94,16 @@ fun GlassAvatar(
     accent: Color,
     isDark: Boolean,
     modifier: Modifier = Modifier,
-    ringWidth: Dp = 2.dp
+    ringWidth: Dp = 1.5.dp
 ) {
     val context = LocalContext.current
-    val backgroundColor = if (isDark) Color(0xFF0E0E12) else Color(0xFFF4F4F8)
+    val backgroundColor = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF0F0F2)
 
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(GlassDesign.avatarRingBrush(accent))
+            .border(ringWidth, accent.copy(alpha = 0.55f), CircleShape)
             .padding(ringWidth)
             .clip(CircleShape)
             .background(backgroundColor),
@@ -232,13 +145,13 @@ fun SmallGlassAvatar(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val backgroundColor = if (isDark) Color(0xFF0E0E12) else Color(0xFFF4F4F8)
+    val backgroundColor = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF0F0F2)
 
     Box(
         modifier = modifier
             .size(32.dp)
             .clip(CircleShape)
-            .background(GlassDesign.avatarRingBrush(accent))
+            .border(1.dp, accent.copy(alpha = 0.45f), CircleShape)
             .padding(1.5.dp)
             .clip(CircleShape)
             .background(backgroundColor),
@@ -355,18 +268,29 @@ fun ChatScreen(
                                 "status" to 1
                             )
                             enc.x3dhEphemeralPubKey?.let { msgMap["x3dhEphemeralPubKey"] = it }
-                            replyingMessage?.let { rMsg -> msgMap["replyToText"] = rMsg.text.takeIf { rMsg.isPlaintextCached } ?: "" }
+                            // Сую ю ю ю
+
+                            replyingMessage?.let { rMsg ->
+                                if (rMsg.isPlaintextCached && rMsg.text.isNotBlank() && chatSecretKey.isNotBlank()) {
+                                    try {
+                                        msgMap["replyToText"] = GhostCrypto.encryptMessage(rMsg.text, chatSecretKey, chatId)
+                                    } catch (e: SecurityException) {
+                                        Log.w("ChatScreen", "photoSend: reply encryption failed, omitting quote: ${e.javaClass.simpleName}")
+                                    }
+                                }
+                            }
 
                             withContext(Dispatchers.IO) {
-                                pushRef.setValue(msgMap).await()
-                                // Пишем сразу как plaintext — это НАШЕ сообщение, повторный decrypt не нужен
-                                // (и физически вреден: receivingChain не предназначена для собственных сообщений).
+                                // 1. Бля тут короче локально пишем сначало
                                 messageDao.insertMessage(MessageEntity(
                                     chatId = chatId, senderId = myId, text = rawData,
                                     timestamp = System.currentTimeMillis(), isFromMe = true, fKey = fKey,
                                     seqNum = enc.seqNum, ratchetPubKey = enc.ratchetPubKey,
                                     isPlaintextCached = true, currentStatus = 1
                                 ))
+
+                                // 2.  отправляем в Firebase
+                                pushRef.setValue(msgMap).await()
                             }
                             replyingMessage = null
                         } catch (e: SecurityException) {
@@ -424,32 +348,54 @@ fun ChatScreen(
         while (isActive) { myStatusRef.setValue(ServerValue.TIMESTAMP); delay(60000) }
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // ФИКС: те же 4 листенера, что и раньше, НО теперь дополнительно
+    // регистрируются в AppSessionManager. onDispose{} — основной путь
+    // отписки (срабатывает при уходе с экрана чата), AppSessionManager —
+    // страховка на случай, если процесс убьют посреди logout-гонки и
+    // Compose не успеет корректно продиспоузить. Порядок critical:
+    // untrack() снимает listener СРАЗУ ЖЕ, так что двойного removeEventListener
+    // не происходит — Firebase SDK идемпотентен к повторному remove.
+    // ────────────────────────────────────────────────────────────────
     DisposableEffect(recipientId) {
-        val nameListener = usersRef.child(recipientId).addValueEventListener(object : ValueEventListener {
+        val recipientRef = usersRef.child(recipientId)
+        val recipientTypingRef = typingRef.child(recipientId)
+
+        val nameListener = object : ValueEventListener {
             override fun onDataChange(s: DataSnapshot) {
-                liveRecipientName = s.child("username").getValue(String::class.java) ?: liveRecipientName
+                liveRecipientName =
+                    s.child("username").getValue(String::class.java) ?: liveRecipientName
                 recipientSecurityLevel = s.child("securityLevel").getValue(Int::class.java) ?: 0
                 recipientAvatarUrl = s.child("avatarUrl").getValue(String::class.java)
                     ?: s.child("profileImage").getValue(String::class.java)
             }
             override fun onCancelled(e: DatabaseError) {}
-        })
+        }
+        AppSessionManager.track(recipientRef, nameListener)
+        recipientRef.addValueEventListener(nameListener)
 
-        val typingListener = typingRef.child(recipientId).addValueEventListener(object : ValueEventListener {
-            override fun onDataChange(s: DataSnapshot) { isRecipientTyping = s.getValue(Boolean::class.java) ?: false }
-            override fun onCancelled(e: DatabaseError) {}
-        })
-
-        val statusListener = statusRef.addValueEventListener(object : ValueEventListener {
+        val typingListener = object : ValueEventListener {
             override fun onDataChange(s: DataSnapshot) {
-                val lastSeen = s.getValue(Long::class.java) ?: 0L
-                statusText = if (System.currentTimeMillis() - lastSeen < 120000) "в сети" else "был(а) недавно"
+                isRecipientTyping = s.getValue(Boolean::class.java) ?: false
             }
             override fun onCancelled(e: DatabaseError) {}
-        })
+        }
+        AppSessionManager.track(recipientTypingRef, typingListener)
+        recipientTypingRef.addValueEventListener(typingListener)
+
+        val statusListener = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) {
+                val lastSeen = s.getValue(Long::class.java) ?: 0L
+                statusText =
+                    if (System.currentTimeMillis() - lastSeen < 120000) "в сети" else "был(а) недавно"
+            }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        AppSessionManager.track(statusRef, statusListener)
+        statusRef.addValueEventListener(statusListener)
 
         // ── Главный листенер сообщений: расшифровка рачет-сообщений ОДИН РАЗ здесь ──
-        val chatListener = chatRef.addChildEventListener(object : ChildEventListener {
+        val chatListener = object : ChildEventListener {
             override fun onChildAdded(s: DataSnapshot, prev: String?) {
                 val fKey = s.key ?: return
                 val senderId = s.child("senderId").getValue(String::class.java) ?: ""
@@ -461,24 +407,47 @@ fun ChatScreen(
                 val ratchetPubKey = s.child("ratchetPubKey").getValue(String::class.java)
                 val x3dhEphemeralPubKey = s.child("x3dhEphemeralPubKey").getValue(String::class.java)
                 val timestamp = s.child("timestamp").getValue(Long::class.java) ?: System.currentTimeMillis()
+                val encryptedReplyToText = s.child("replyToText").getValue(String::class.java)
+                val isEdited = s.child("isEdited").getValue(Boolean::class.java) ?: false
 
                 scope.launch(Dispatchers.IO) {
-                    if (messageDao.getMessageByFirebaseKey(fKey) != null) return@launch // уже обработано (в т.ч. наше же эхо)
+                    val existingMsg = messageDao.getMessageByFirebaseKey(fKey)
 
+                    // 1. ЕСЛИ ЭТО НАШЕ СООБЩЕНИЕ (СВОЁ)
                     if (senderId == myId) {
-                        // Эхо собственного сообщения, но мы его почему-то ещё не закешировали
-                        // (например, отправили с другого устройства) — кладём как ciphertext,
-                        // расшифровать своё сообщение через decryptMessage НЕЛЬЗЯ (чужой ключ направления).
-                        messageDao.insertMessage(MessageEntity(
-                            chatId = chatId, senderId = senderId, text = rawText, timestamp = timestamp,
-                            isFromMe = true, fKey = fKey, seqNum = seqNum, ratchetPubKey = ratchetPubKey,
-                            isPlaintextCached = false, currentStatus = remoteStatus
-                        ))
+                        if (existingMsg != null) {
+                            if (existingMsg.currentStatus != remoteStatus) {
+                                messageDao.insertMessage(existingMsg.copy(currentStatus = remoteStatus))
+                            }
+                        } else {
+                            val decryptedReplyText: String? = if (!encryptedReplyToText.isNullOrBlank()) {
+                                try { GhostCrypto.decryptMessage(encryptedReplyToText, chatSecretKey, chatId) } catch (e: Exception) { null }
+                            } else null
+
+                            messageDao.insertMessage(MessageEntity(
+                                chatId = chatId, senderId = senderId, text = rawText, timestamp = timestamp,
+                                isFromMe = true, fKey = fKey, seqNum = seqNum, ratchetPubKey = ratchetPubKey,
+                                rText = decryptedReplyText,
+                                isPlaintextCached = false, currentStatus = remoteStatus
+                            ))
+                        }
                         return@launch
                     }
 
+                    // 2. ЕСЛИ СООБЩЕНИЕ ЧУЖОЕ И УЖЕ ЕСТЬ В БАЗЕ — ИГНОРИРУЕМ
+                    if (existingMsg != null) return@launch
+
+                    // 3. ОБРАБОТКА ВХОДЯЩИХ СООБЩЕНИЙ ОТ СОБЕСЕДНИКА
+                    val decryptedReplyText: String? = if (!encryptedReplyToText.isNullOrBlank()) {
+                        try {
+                            GhostCrypto.decryptMessage(encryptedReplyToText, chatSecretKey, chatId)
+                        } catch (e: Exception) {
+                            Log.w("ChatScreen", "onChildAdded: reply preview decrypt failed fKey=$fKey: ${e.javaClass.simpleName}")
+                            null
+                        }
+                    } else null
+
                     if (ratchetPubKey != null) {
-                        // Рачет-сообщение: расшифровываем РОВНО ОДИН РАЗ прямо сейчас.
                         val plaintext = sessionManager.decryptMessage(
                             chatId = chatId, myId = myId, recipientId = recipientId,
                             incoming = IncomingMessage(
@@ -493,48 +462,82 @@ fun ChatScreen(
                             text = plaintext ?: "[не удалось расшифровать]",
                             timestamp = timestamp, isFromMe = false, fKey = fKey,
                             seqNum = seqNum, ratchetPubKey = ratchetPubKey,
+                            rText = decryptedReplyText,
                             isPlaintextCached = true, currentStatus = remoteStatus
                         ))
                     } else {
-                        // Legacy-сообщение без рачета — старое поведение, decrypt при рендере.
                         messageDao.insertMessage(MessageEntity(
                             chatId = chatId, senderId = senderId, text = rawText, timestamp = timestamp,
                             isFromMe = false, fKey = fKey,
-                            rText = s.child("replyToText").getValue(String::class.java),
-                            isEdit = s.child("isEdited").getValue(Boolean::class.java) ?: false,
+                            rText = decryptedReplyText,
+                            isEdit = isEdited,
                             isPlaintextCached = false, currentStatus = remoteStatus
                         ))
                     }
                 }
             }
+
             override fun onChildChanged(s: DataSnapshot, prev: String?) {
                 val fKey = s.key ?: return
+                val isEdited = s.child("isEdited").getValue(Boolean::class.java) ?: false
+                val newStatus = s.child("status").getValue(Int::class.java)
+                val newCiphertext = s.child("text").getValue(String::class.java)
+
                 scope.launch(Dispatchers.IO) {
-                    messageDao.getMessageByFirebaseKey(fKey)?.let { old ->
-                        messageDao.insertMessage(old.copy(
-                            isEdit = s.child("isEdited").getValue(Boolean::class.java) ?: old.isEdit,
-                            currentStatus = s.child("status").getValue(Int::class.java) ?: old.currentStatus
-                        ))
+                    val old = messageDao.getMessageByFirebaseKey(fKey) ?: return@launch
+
+                    if (isEdited && newCiphertext != null && newCiphertext != old.text) {
+                        val decrypted = if (chatSecretKey.isNotBlank()) {
+                            try {
+                                GhostCrypto.decryptMessage(newCiphertext, chatSecretKey, chatId)
+                            } catch (e: SecurityException) {
+                                Log.e("ChatScreen", "onChildChanged: edit decrypt failed fKey=$fKey: ${e.javaClass.simpleName}")
+                                null
+                            }
+                        } else {
+                            Log.w("ChatScreen", "onChildChanged: legacy key not ready, deferring edit decrypt fKey=$fKey")
+                            null
+                        }
+
+                        messageDao.insertMessage(
+                            old.copy(
+                                text = decrypted ?: old.text,
+                                isEdit = true,
+                                isPlaintextCached = decrypted != null,
+                                seqNum = if (decrypted != null) 0 else old.seqNum,
+                                ratchetPubKey = if (decrypted != null) null else old.ratchetPubKey,
+                                currentStatus = newStatus ?: old.currentStatus
+                            )
+                        )
+                    } else {
+                        messageDao.insertMessage(
+                            old.copy(
+                                isEdit = isEdited,
+                                currentStatus = newStatus ?: old.currentStatus
+                            )
+                        )
                     }
                 }
             }
+
             override fun onChildRemoved(s: DataSnapshot) {
                 scope.launch(Dispatchers.IO) { messageDao.deleteByFirebaseKey(s.key ?: "") }
             }
             override fun onChildMoved(s: DataSnapshot, prev: String?) {}
             override fun onCancelled(error: DatabaseError) {}
-        })
+        }
+        AppSessionManager.track(chatRef, chatListener)
+        chatRef.addChildEventListener(chatListener)
 
         onDispose {
-            usersRef.child(recipientId).removeEventListener(nameListener)
-            typingRef.child(recipientId).removeEventListener(typingListener)
-            statusRef.removeEventListener(statusListener)
-            chatRef.removeEventListener(chatListener)
+            AppSessionManager.untrack(recipientRef, nameListener)
+            AppSessionManager.untrack(recipientTypingRef, typingListener)
+            AppSessionManager.untrack(statusRef, statusListener)
+            AppSessionManager.untrack(chatRef, chatListener)
         }
     }
-
     val chatAccent = Color(currentSettings.globalAccentColor)
-    val bgColor = Color(currentSettings.globalBackgroundColor)
+    val bgColor = FlatDesign.screenBackground(Color(currentSettings.globalBackgroundColor))
     val isDark = bgColor.luminance() < 0.5f
     val contentColor = if (isDark) Color.White else Color.Black
     val textOnMe = if (chatAccent.luminance() > 0.5f) Color.Black else Color.White
@@ -547,22 +550,17 @@ fun ChatScreen(
         onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
 
-    Box(Modifier.fillMaxSize().background(GlassDesign.backgroundGradient(bgColor))) {
+    // Плоский чёрный фон, БЕЗ градиента и БЕЗ верхней "glow"-полосы.
+    Box(Modifier.fillMaxSize().background(bgColor)) {
         currentSettings.chatWallpaperUrl?.let {
             AsyncImage(model = it, contentDescription = null,
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.10f)
         }
 
-        Box(Modifier.fillMaxWidth().height(220.dp).background(
-            Brush.verticalGradient(listOf(
-                chatAccent.copy(alpha = if (isDark) 0.035f else 0.018f), Color.Transparent
-            ))
-        ))
-
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
-                GlassTopBar(
+                FlatTopBar(
                     recipientName = liveRecipientName,
                     recipientAvatarUrl = recipientAvatarUrl,
                     statusText = statusText,
@@ -577,7 +575,7 @@ fun ChatScreen(
                 )
             },
             bottomBar = {
-                GlassBottomPanel(
+                FlatBottomPanel(
                     text = inputText,
                     onTextChange = {
                         inputText = it
@@ -590,11 +588,11 @@ fun ChatScreen(
                     onCancelEdit = { editingMessage = null; inputText = "" },
                     onPhoto = { photoLauncher.launch("image/*") },
                     onSend = {
-                        if (inputText.isBlank()) return@GlassBottomPanel
+                        if (inputText.isBlank()) return@FlatBottomPanel
                         val pubKey = recipientPublicKey
                         if (pubKey == null) {
                             Toast.makeText(context, "Ключ собеседника ещё не загружен, попробуйте через секунду", Toast.LENGTH_SHORT).show()
-                            return@GlassBottomPanel
+                            return@FlatBottomPanel
                         }
                         val textToSend = inputText.trim()
                         val editTarget = editingMessage
@@ -614,7 +612,18 @@ fun ChatScreen(
                                         mapOf("text" to encrypted, "isEdited" to true)
                                     )
                                     withContext(Dispatchers.IO) {
-                                        messageDao.insertMessage(editTarget.copy(text = textToSend, isEdit = true, isPlaintextCached = false))
+                                        // ФИКС БАГА №3a: text уже plaintext (textToSend) → isPlaintextCached
+                                        // ОБЯЗАН быть true, иначе safeDecryptSync увидит унаследованный
+                                        // seqNum>0 от старого ratchet-сообщения, посчитает это ratchet-payload
+                                        // и покажет заглушку "Отправлено с другого устройства" вместо текста,
+                                        // который уже лежит в Room в открытом виде.
+                                        // seqNum/ratchetPubKey сбрасываем — сообщение теперь навсегда живёт
+                                        // в legacy-схеме, повторный decrypt (если isPlaintextCached когда-либо
+                                        // собьётся) должен идти по legacy-пути, а не пытаться найти давно
+                                        // уничтоженный ratchet message key.
+                                        messageDao.updateEditedMessage(editTarget.fKey, textToSend)
+
+
                                     }
                                 } else {
                                     val pushRef = chatRef.push()
@@ -630,12 +639,23 @@ fun ChatScreen(
                                         "status" to 1
                                     )
                                     enc.x3dhEphemeralPubKey?.let { msgMap["x3dhEphemeralPubKey"] = it }
+
+                                    // ФИКС БАГА №1: раньше сюда клался ОТКРЫТЫЙ ТЕКСТ цитаты (rMsg.text),
+                                    // минуя всё E2EE. Теперь шифруем legacy-ключом чата — той же схемой,
+                                    // что и правки (chatSecretKey к этому моменту уже резолвлен, см.
+                                    // LaunchedEffect(chatId) → resolveOrCreateChatKey выше по файлу).
                                     replyTarget?.let { rMsg ->
-                                        if (rMsg.isPlaintextCached) msgMap["replyToText"] = rMsg.text
+                                        if (rMsg.isPlaintextCached && rMsg.text.isNotBlank() && chatSecretKey.isNotBlank()) {
+                                            try {
+                                                msgMap["replyToText"] = GhostCrypto.encryptMessage(rMsg.text, chatSecretKey, chatId)
+                                            } catch (e: SecurityException) {
+                                                Log.w("ChatScreen", "onSend: reply encryption failed, omitting quote: ${e.javaClass.simpleName}")
+                                            }
+                                        }
                                     }
 
                                     withContext(Dispatchers.IO) {
-                                        pushRef.setValue(msgMap).await()
+                                        // 1. СНАЧАЛА вставляем в локальную базу Room с isPlaintextCached = true!
                                         messageDao.insertMessage(MessageEntity(
                                             chatId = chatId, senderId = myId, text = textToSend,
                                             timestamp = System.currentTimeMillis(), isFromMe = true, fKey = fKey,
@@ -643,12 +663,12 @@ fun ChatScreen(
                                             seqNum = enc.seqNum, ratchetPubKey = enc.ratchetPubKey,
                                             isPlaintextCached = true, currentStatus = 1
                                         ))
+
+                                        // 2. И ТОЛЬКО ПОТОМ отправляем в Firebase!
+                                        pushRef.setValue(msgMap).await()
                                     }
                                 }
                             } catch (e: SecurityException) {
-                                // Сюда прилетит "identity private key missing" из createInitiatorSession,
-                                // если ключи ещё не успели сгенерироваться, или сбой Keystore unwrap.
-                                // НЕ роняем приложение — возвращаем текст пользователю, чтобы не терять сообщение.
                                 Log.e("ChatScreen", "onSend: encryption failed: ${e.javaClass.simpleName}", e)
                                 inputText = textToSend
                                 Toast.makeText(
@@ -667,6 +687,10 @@ fun ChatScreen(
             }
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
+                if (!isKeyLoading && messages.isEmpty()) {
+                    EmptyChatState(contentColor = contentColor, accent = chatAccent)
+                }
+
                 LazyColumn(
                     state = listState, modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
@@ -674,8 +698,8 @@ fun ChatScreen(
                     items(messages, key = { it.fKey }) { msg ->
                         AnimatedVisibility(
                             visible = true,
-                            enter = fadeIn(tween(320, easing = FastOutSlowInEasing)) +
-                                    slideInVertically(initialOffsetY = { it / 5 }, animationSpec = tween(320, easing = FastOutSlowInEasing))
+                            enter = fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                                    slideInVertically(initialOffsetY = { it / 6 }, animationSpec = tween(220, easing = FastOutSlowInEasing))
                         ) {
                             GlassBubble(
                                 msg = msg,
@@ -702,13 +726,11 @@ fun ChatScreen(
                 if (isKeyLoading) {
                     Surface(
                         modifier = Modifier.align(Alignment.Center),
-                        color = GlassDesign.glassColor(if (isDark) Color.Black else Color.White, GlassDesign.FLOATING_ALPHA),
-                        shape = RoundedCornerShape(22.dp),
-                        border = BorderStroke(0.75.dp, GlassDesign.glassBorder(isDark)),
-                        shadowElevation = 12.dp
+                        color = FlatDesign.surfaceMuted(isDark),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
                         Column(
-                            Modifier.padding(30.dp).drawBehind { drawVignette(isDark, 0.05f) }.grainOverlay(isDark, 300),
+                            Modifier.padding(28.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             CircularProgressIndicator(color = chatAccent, strokeWidth = 2.dp, modifier = Modifier.size(26.dp))
@@ -881,85 +903,136 @@ private suspend fun createAndPublishNewChatKey(
 }
 
 // ══════════════════════════════════════════════════════════
-// GLASS TOP BAR (без изменений)
+// EMPTY STATE — "Начните общение" (как в target-дизайне)
+//
+// Рендерится в Box поверх LazyColumn, когда список сообщений пуст
+// и ключи уже загружены (isKeyLoading == false). Чисто визуальный
+// композабл, никакой логики не содержит.
+// ══════════════════════════════════════════════════════════
+
+@Composable
+private fun EmptyChatState(contentColor: Color, accent: Color) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(
+                shape = CircleShape,
+                color = contentColor.copy(alpha = 0.06f),
+                modifier = Modifier.size(64.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = null,
+                        tint = contentColor.copy(alpha = 0.35f),
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "Начните общение",
+                color = contentColor.copy(alpha = 0.85f),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Отправьте сообщение, чтобы начать\nзащищённый чат",
+                color = contentColor.copy(alpha = 0.4f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+// FLAT TOP BAR — сплошной чёрный/белый, без blur и alpha-стекла
 // ══════════════════════════════════════════════════════════
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GlassTopBar(
+private fun FlatTopBar(
     recipientName: String, recipientAvatarUrl: String?, statusText: String, isTyping: Boolean,
     accent: Color, contentColor: Color, isDark: Boolean, onBack: () -> Unit,
     onVideoCall: (() -> Unit)?, onAudioCall: (() -> Unit)?, onClear: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = GlassDesign.glassColor(if (isDark) Color.Black else Color.White, GlassDesign.TOPBAR_ALPHA),
-        border = BorderStroke(0.5.dp, GlassDesign.glassBorder(isDark)),
-        shadowElevation = 6.dp
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(FlatDesign.screenBackground(if (isDark) Color.Black else Color.White))
+            .statusBarsPadding()
+            .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .background(GlassDesign.innerGlow(accent, isDark))
-                .drawBehind { drawVignette(isDark, 0.04f) }
-                .grainOverlay(isDark, 500)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            color = if (isDark) Color(0xFF1C1C1E) else Color(0xFFEFEFF0)
         ) {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        GlassAvatar(
-                            avatarUrl = recipientAvatarUrl,
-                            fallbackLetter = recipientName.firstOrNull()?.toString() ?: "?",
-                            size = 44.dp, accent = accent, isDark = isDark, ringWidth = 2.dp
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        Column {
-                            Text(recipientName, color = contentColor.copy(alpha = 0.95f),
-                                fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, letterSpacing = (-0.15).sp)
-                            Spacer(Modifier.height(2.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (isTyping) { TypingDots(accent = accent); Spacer(Modifier.width(6.dp)) }
-                                Text(
-                                    text = if (isTyping) "печатает..." else statusText,
-                                    color = if (isTyping) accent else contentColor.copy(alpha = 0.42f),
-                                    fontSize = 12.sp,
-                                    fontWeight = if (isTyping) FontWeight.Medium else FontWeight.Normal
-                                )
-                            }
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = contentColor.copy(alpha = 0.72f))
-                    }
-                },
-                actions = {
-                    if (onAudioCall != null) {
-                        IconButton(onClick = onAudioCall) {
-                            Icon(Icons.Default.Call, "Аудиозвонок", tint = contentColor.copy(alpha = 0.58f), modifier = Modifier.size(21.dp))
-                        }
-                    }
-                    if (onVideoCall != null) {
-                        IconButton(onClick = onVideoCall) {
-                            Icon(Icons.Default.Videocam, "Видеозвонок", tint = contentColor.copy(alpha = 0.58f), modifier = Modifier.size(21.dp))
-                        }
-                    }
-                    IconButton(onClick = onClear) {
-                        Icon(Icons.Default.MoreVert, null, tint = contentColor.copy(alpha = 0.40f), modifier = Modifier.size(20.dp))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = contentColor.copy(alpha = 0.9f))
+                }
 
-            Box(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp)
-                    .background(Brush.horizontalGradient(listOf(
-                        Color.Transparent, accent.copy(alpha = 0.13f),
-                        accent.copy(alpha = 0.13f), Color.Transparent
-                    )))
-            )
+                GlassAvatar(
+                    avatarUrl = recipientAvatarUrl,
+                    fallbackLetter = recipientName.firstOrNull()?.toString() ?: "?",
+                    size = 38.dp, accent = accent, isDark = isDark, ringWidth = 1.5.dp
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                Column(Modifier.weight(1f)) {
+                    Text(recipientName, color = contentColor,
+                        fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, letterSpacing = (-0.1).sp)
+                    Spacer(Modifier.height(1.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isTyping) { TypingDots(accent = accent); Spacer(Modifier.width(6.dp)) }
+                        Text(
+                            text = if (isTyping) "печатает..." else statusText,
+                            color = if (isTyping) accent else FlatDesign.secondaryText(isDark),
+                            fontSize = 11.sp,
+                            fontWeight = if (isTyping) FontWeight.Medium else FontWeight.Normal
+                        )
+                    }
+                }
+
+                if (onAudioCall != null) {
+                    TopBarCircleButton(onClick = onAudioCall, isDark = isDark) {
+                        Icon(Icons.Default.Call, "Аудиозвонок", tint = contentColor.copy(alpha = 0.9f), modifier = Modifier.size(17.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                if (onVideoCall != null) {
+                    TopBarCircleButton(onClick = onVideoCall, isDark = isDark) {
+                        Icon(Icons.Default.Videocam, "Видеозвонок", tint = contentColor.copy(alpha = 0.9f), modifier = Modifier.size(17.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                TopBarCircleButton(onClick = onClear, isDark = isDark) {
+                    Icon(Icons.Default.MoreVert, null, tint = contentColor.copy(alpha = 0.9f), modifier = Modifier.size(17.dp))
+                }
+            }
         }
+    }
+}
+
+/** Round dark-filled icon button for top-bar actions — matches reference screenshot */
+@Composable
+private fun TopBarCircleButton(onClick: () -> Unit, isDark: Boolean, content: @Composable () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(34.dp),
+        shape = CircleShape,
+        color = if (isDark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.06f)
+    ) {
+        Box(contentAlignment = Alignment.Center) { content() }
     }
 }
 
@@ -983,11 +1056,13 @@ private fun TypingDots(accent: Color) {
     }
 }
 
-
 private val EaseInOutCubic: Easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f)
 
 // ══════════════════════════════════════════════════════════
-// GLASS BUBBLE — decrypt вынесен в produceState (фикс п.7)
+// GLASS BUBBLE — переименование сохранено (используется извне),
+// но визуал теперь полностью плоский: сплошная заливка, без
+// drawWithContent-подсветки (bubbleShine) поверх контента.
+// Decrypt-логика для legacy/ratchet сообщений не тронута.
 // ══════════════════════════════════════════════════════════
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1011,7 +1086,7 @@ fun GlassBubble(
     // Рачет-сообщения УЖЕ расшифрованы при получении (см. ChatScreen-листенер) —
     // никакой работы на UI-потоке не требуется, читаем напрямую.
     // Legacy-сообщения расшифровываются здесь, но строго на Dispatchers.Default,
-    // а не синхронно в remember{} на главном потоке (это и был баг п.7).
+    // а не синхронно в remember{} на главном потоке.
     val dec by produceState(
         initialValue = if (msg.isPlaintextCached) msg.text else "Загрузка...",
         msg.fKey, msg.text, chatKey, chatId
@@ -1021,12 +1096,11 @@ fun GlassBubble(
         }
     }
 
-
     val isImg = dec.startsWith("GHOST_IMG:")
     val url = if (isImg) dec.substringAfter("GHOST_IMG:") else null
 
     val baseRadius = settings.chatCornerRadius.dp.coerceAtLeast(12.dp)
-    val tailRadius = 8.dp
+    val tailRadius = 6.dp
 
     val bubbleShape = RoundedCornerShape(
         topStart = baseRadius, topEnd = baseRadius,
@@ -1034,10 +1108,9 @@ fun GlassBubble(
         bottomStart = if (isMe) baseRadius else tailRadius
     )
 
-    val bubbleColor = if (isMe) GlassDesign.myBubbleColor(accent) else GlassDesign.recipientBubbleColor(isDark)
-    val bubbleBorder = if (isMe) BorderStroke(0.5.dp, accent.copy(alpha = 0.22f)) else BorderStroke(0.5.dp, GlassDesign.recipientBubbleBorder(isDark))
+    val bubbleColor = if (isMe) FlatDesign.myBubble(accent) else FlatDesign.recipientBubble(isDark)
     val textColor = if (isMe) textOnMe else if (isDark) Color.White.copy(alpha = 0.94f) else Color.Black.copy(alpha = 0.88f)
-    val metaColor = if (isMe) textOnMe.copy(alpha = 0.48f) else if (isDark) Color.White.copy(alpha = 0.36f) else Color.Black.copy(alpha = 0.36f)
+    val metaColor = if (isMe) textOnMe.copy(alpha = 0.55f) else FlatDesign.secondaryText(isDark)
 
     if (isMe) {
         Column(
@@ -1046,9 +1119,9 @@ fun GlassBubble(
         ) {
             BubbleContent(
                 msg = msg, dec = dec, isImg = isImg, url = url, isMe = true,
-                bubbleShape = bubbleShape, bubbleColor = bubbleColor, bubbleBorder = bubbleBorder,
+                bubbleShape = bubbleShape, bubbleColor = bubbleColor,
                 textColor = textColor, textOnMe = textOnMe, metaColor = metaColor,
-                accent = accent, settings = settings, isDark = isDark,
+                accent = accent, settings = settings,
                 onLong = onLong, onImg = onImg
             )
         }
@@ -1067,9 +1140,9 @@ fun GlassBubble(
             Column(horizontalAlignment = Alignment.Start, modifier = Modifier.weight(1f, fill = false)) {
                 BubbleContent(
                     msg = msg, dec = dec, isImg = isImg, url = url, isMe = false,
-                    bubbleShape = bubbleShape, bubbleColor = bubbleColor, bubbleBorder = bubbleBorder,
+                    bubbleShape = bubbleShape, bubbleColor = bubbleColor,
                     textColor = textColor, textOnMe = textOnMe, metaColor = metaColor,
-                    accent = accent, settings = settings, isDark = isDark,
+                    accent = accent, settings = settings,
                     onLong = onLong, onImg = onImg
                 )
             }
@@ -1081,73 +1154,68 @@ fun GlassBubble(
 @Composable
 private fun BubbleContent(
     msg: MessageEntity, dec: String, isImg: Boolean, url: String?, isMe: Boolean,
-    bubbleShape: RoundedCornerShape, bubbleColor: Color, bubbleBorder: BorderStroke,
+    bubbleShape: RoundedCornerShape, bubbleColor: Color,
     textColor: Color, textOnMe: Color, metaColor: Color, accent: Color,
-    settings: SettingsEntity, isDark: Boolean, onLong: () -> Unit, onImg: (String) -> Unit
+    settings: SettingsEntity, onLong: () -> Unit, onImg: (String) -> Unit
 ) {
     Surface(
         modifier = Modifier
             .combinedClickable(onLongClick = onLong, onClick = { if (isImg && url != null) onImg(url) })
             .widthIn(min = 68.dp, max = 280.dp),
-        shape = bubbleShape, color = bubbleColor, border = bubbleBorder,
-        shadowElevation = if (isMe) 4.dp else 1.5.dp
+        shape = bubbleShape, color = bubbleColor
     ) {
-        Box(Modifier.drawWithContent {
-            drawContent()
-            drawRect(brush = GlassDesign.bubbleShine(isMe, accent, isDark), size = size)
-        }) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (!msg.rText.isNullOrBlank()) {
-                    Surface(
-                        modifier = Modifier.padding(bottom = 8.dp),
-                        color = if (isMe) Color.Black.copy(alpha = 0.09f) else accent.copy(alpha = 0.06f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier.width(2.5.dp).height(20.dp).clip(RoundedCornerShape(2.dp))
-                                    .background(Brush.verticalGradient(listOf(accent, accent.copy(alpha = 0.15f))))
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(msg.rText!!, color = if (isMe) textOnMe.copy(alpha = 0.58f) else metaColor,
-                                fontSize = 12.sp, maxLines = 1, fontWeight = FontWeight.Medium)
-                        }
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            if (!msg.rText.isNullOrBlank()) {
+                Surface(
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    color = if (isMe) Color.Black.copy(alpha = 0.12f) else accent.copy(alpha = 0.10f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.width(2.5.dp).height(20.dp).clip(RoundedCornerShape(2.dp))
+                                .background(accent)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(msg.rText!!, color = if (isMe) textOnMe.copy(alpha = 0.65f) else metaColor,
+                            fontSize = 12.sp, maxLines = 1, fontWeight = FontWeight.Medium)
                     }
                 }
+            }
 
-                if (isImg) {
-                    AsyncImage(model = url, contentDescription = null,
-                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).widthIn(max = 240.dp),
-                        contentScale = ContentScale.FillWidth)
-                } else {
-                    Text(dec, color = textColor, fontSize = settings.fontSize.sp,
-                        lineHeight = (settings.fontSize + 5).sp)
-                }
+            if (isImg) {
+                AsyncImage(model = url, contentDescription = null,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).widthIn(max = 240.dp),
+                    contentScale = ContentScale.FillWidth)
+            } else {
+                Text(dec, color = textColor, fontSize = settings.fontSize.sp,
+                    lineHeight = (settings.fontSize + 5).sp)
+            }
 
-                Row(
-                    modifier = Modifier.align(Alignment.End).padding(top = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    if (msg.isEdit) Text("изм.", color = metaColor, fontSize = 9.sp)
-                    Text(
-                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp)),
-                        color = metaColor, fontSize = 10.sp, letterSpacing = 0.3.sp
-                    )
-                    if (isMe) ChatStatusIconLocal(status = msg.currentStatus, tint = textOnMe.copy(alpha = 0.60f))
-                }
+            Row(
+                modifier = Modifier.align(Alignment.End).padding(top = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                if (msg.isEdit) Text("изм.", color = metaColor, fontSize = 9.sp)
+                Text(
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp)),
+                    color = metaColor, fontSize = 10.sp, letterSpacing = 0.3.sp
+                )
+                if (isMe) ChatStatusIconLocal(status = msg.currentStatus, tint = textOnMe.copy(alpha = 0.65f))
             }
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════
-// GLASS BOTTOM PANEL — chatSecretKey/chatId больше не нужны для ratchet-пути,
-// оставлены только для legacy-превью реплая
+// FLAT BOTTOM PANEL — плоский pill-инпут в стиле target-дизайна:
+// attach слева, текстовое поле по центру, круглая кнопка отправки
+// (белый круг / accent) справа. Никакого свечения и грейна.
 // ══════════════════════════════════════════════════════════
 
 @Composable
-private fun GlassBottomPanel(
+private fun FlatBottomPanel(
     text: String, onTextChange: (String) -> Unit,
     accent: Color, isDark: Boolean, contentColor: Color,
     uploading: Boolean, replyingMessage: MessageEntity?,
@@ -1156,39 +1224,29 @@ private fun GlassBottomPanel(
     onPhoto: () -> Unit, onSend: () -> Unit
 ) {
     val sendScale by animateFloatAsState(
-        targetValue = if (text.isNotBlank()) 1f else 0.82f,
-        animationSpec = spring(dampingRatio = 0.55f, stiffness = 350f), label = "ss"
-    )
-    val sendElevation by animateDpAsState(
-        targetValue = if (text.isNotBlank()) 8.dp else 0.dp,
-        animationSpec = tween(250), label = "se"
+        targetValue = if (text.isNotBlank()) 1f else 0.9f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 380f), label = "ss"
     )
 
     Column(
         Modifier
             .fillMaxWidth()
-            .background(GlassDesign.glassColor(if (isDark) Color.Black else Color.White, GlassDesign.BOTTOMBAR_ALPHA))
-            .drawBehind { drawVignette(isDark, 0.03f) }
-            .grainOverlay(isDark, 400)
+            .background(FlatDesign.screenBackground(if (isDark) Color.Black else Color.White))
             .navigationBarsPadding()
     ) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(
-            Brush.horizontalGradient(listOf(Color.Transparent, accent.copy(alpha = 0.10f), accent.copy(alpha = 0.10f), Color.Transparent))
-        ))
+        HorizontalDivider(thickness = 1.dp, color = FlatDesign.divider(isDark))
 
         AnimatedVisibility(
             visible = replyingMessage != null,
-            enter = expandVertically(tween(220)) + fadeIn(tween(220)),
-            exit = shrinkVertically(tween(160)) + fadeOut(tween(160))
+            enter = expandVertically(tween(180)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(140)) + fadeOut(tween(140))
         ) {
             replyingMessage?.let { msg ->
-                Surface(Modifier.fillMaxWidth(), color = accent.copy(alpha = 0.04f)) {
+                Surface(Modifier.fillMaxWidth(), color = FlatDesign.surfaceMuted(isDark)) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             Modifier.width(3.dp).height(36.dp).clip(RoundedCornerShape(2.dp))
-                                .background(Brush.verticalGradient(listOf(
-                                    accent, accent.copy(alpha = 0.6f), accent.copy(alpha = 0.25f), accent.copy(alpha = 0.08f)
-                                )))
+                                .background(accent)
                         )
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -1196,11 +1254,11 @@ private fun GlassBottomPanel(
                             Spacer(Modifier.height(3.dp))
                             Text(
                                 if (msg.isPlaintextCached) msg.text.ifBlank { "..." } else "...",
-                                color = contentColor.copy(alpha = 0.50f), fontSize = 13.sp, maxLines = 1
+                                color = FlatDesign.secondaryText(isDark), fontSize = 13.sp, maxLines = 1
                             )
                         }
                         IconButton(onClick = onCancelReply, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Default.Close, null, tint = contentColor.copy(alpha = 0.32f), modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Close, null, tint = contentColor.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
                         }
                     }
                 }
@@ -1209,75 +1267,97 @@ private fun GlassBottomPanel(
 
         AnimatedVisibility(
             visible = editingMessage != null,
-            enter = expandVertically(tween(220)) + fadeIn(tween(220)),
-            exit = shrinkVertically(tween(160)) + fadeOut(tween(160))
+            enter = expandVertically(tween(180)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(140)) + fadeOut(tween(140))
         ) {
-            Surface(Modifier.fillMaxWidth(), color = accent.copy(alpha = 0.05f)) {
+            Surface(Modifier.fillMaxWidth(), color = FlatDesign.surfaceMuted(isDark)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Edit, null, tint = accent, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Редактирование", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                     IconButton(onClick = onCancelEdit, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Close, null, tint = contentColor.copy(alpha = 0.42f), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Close, null, tint = contentColor.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
                     }
                 }
             }
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.Bottom) {
+
+            // ── Единый pill: GIF-бейдж + текстовое поле + скрепка ──
+            // Ровно как в референсе — всё в одном контейнере, а не разбросано по кругам.
             Surface(
-                onClick = onPhoto,
-                modifier = Modifier.size(46.dp).align(Alignment.CenterVertically),
-                shape = CircleShape, color = contentColor.copy(alpha = 0.04f),
-                border = BorderStroke(0.5.dp, GlassDesign.glassBorder(isDark))
+                modifier = Modifier.weight(1f).heightIn(min = 46.dp),
+                shape = RoundedCornerShape(26.dp), color = FlatDesign.surfaceMuted(isDark)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // GIF-бейдж — чисто визуальный элемент как в референсе,
+                    // приложение не поддерживает GIF, поэтому клик игнорируется.
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.35f)),
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            "GIF",
+                            color = contentColor.copy(alpha = 0.55f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    Spacer(Modifier.width(10.dp))
+
+                    TextField(
+                        value = text, onValueChange = onTextChange,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Сообщение", color = contentColor.copy(alpha = 0.32f), fontSize = 15.sp) },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = accent, focusedTextColor = contentColor, unfocusedTextColor = contentColor
+                        ),
+                        textStyle = TextStyle(fontSize = 15.sp),
+                        maxLines = 5
+                    )
+
+                    IconButton(onClick = onPhoto, modifier = Modifier.size(38.dp)) {
+                        if (uploading) CircularProgressIndicator(Modifier.size(18.dp), color = accent, strokeWidth = 2.dp)
+                        else Icon(
+                            Icons.Default.AttachFile, null,
+                            tint = contentColor.copy(alpha = 0.55f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            // ── Отдельный круглый белый button справа — mic/send, как в референсе ──
+            Surface(
+                onClick = { if (text.isNotBlank()) onSend() },
+                modifier = Modifier.size(46.dp).align(Alignment.CenterVertically).scale(sendScale),
+                shape = CircleShape,
+                color = if (isDark) Color.White else Color.Black
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    if (uploading) CircularProgressIndicator(Modifier.size(20.dp), color = accent, strokeWidth = 2.dp)
-                    else Icon(Icons.Default.AttachFile, null, tint = contentColor.copy(alpha = 0.52f), modifier = Modifier.size(21.dp))
-                }
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Surface(
-                Modifier.weight(1f).heightIn(min = 46.dp),
-                shape = RoundedCornerShape(26.dp), color = contentColor.copy(alpha = 0.045f),
-                border = BorderStroke(0.5.dp, GlassDesign.glassBorder(isDark))
-            ) {
-                TextField(
-                    value = text, onValueChange = onTextChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Сообщение...", color = contentColor.copy(alpha = 0.28f), fontSize = 15.sp) },
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
-                        cursorColor = accent, focusedTextColor = contentColor, unfocusedTextColor = contentColor
-                    ),
-                    textStyle = TextStyle(fontSize = 15.sp),
-                    maxLines = 5
-                )
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Box(modifier = Modifier.size(46.dp).align(Alignment.CenterVertically), contentAlignment = Alignment.Center) {
-                if (text.isNotBlank()) {
-                    Box(Modifier.size(52.dp).clip(CircleShape).background(accent.copy(alpha = 0.12f)))
-                }
-                Surface(
-                    onClick = onSend,
-                    modifier = Modifier.size(46.dp).scale(sendScale),
-                    shape = CircleShape,
-                    color = if (text.isNotBlank()) accent else accent.copy(alpha = 0.35f),
-                    shadowElevation = sendElevation
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    if (text.isNotBlank()) {
                         Icon(
                             Icons.AutoMirrored.Filled.Send, null,
-                            tint = if (text.isNotBlank()) {
-                                if (accent.luminance() > 0.5f) Color.Black else Color.White
-                            } else contentColor.copy(alpha = 0.28f),
+                            tint = if (isDark) Color.Black else Color.White,
                             modifier = Modifier.size(20.dp).graphicsLayer { translationX = 1f }
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Mic, null,
+                            tint = if (isDark) Color.Black else Color.White,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
@@ -1287,19 +1367,16 @@ private fun GlassBottomPanel(
 }
 
 // ══════════════════════════════════════════════════════════
-// GLASS DIALOGS (без изменений)
+// FLAT DIALOGS — без блюра/грейна, сплошной фон
 // ══════════════════════════════════════════════════════════
 
 @Composable
 fun GlassDialog(onDismiss: () -> Unit, isDark: Boolean, accent: Color, content: @Composable ColumnScope.() -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss, confirmButton = {},
-        containerColor = if (isDark) Color(0xFF101015) else Color(0xFFF5F5F9),
-        shape = RoundedCornerShape(24.dp), tonalElevation = 0.dp,
-        modifier = Modifier.border(0.5.dp, GlassDesign.glassBorderAccent(accent), RoundedCornerShape(24.dp)),
-        text = {
-            Column(Modifier.drawBehind { drawVignette(isDark, 0.03f) }.grainOverlay(isDark, 350)) { content() }
-        }
+        containerColor = if (isDark) Color(0xFF121214) else Color(0xFFF5F5F7),
+        shape = RoundedCornerShape(20.dp), tonalElevation = 0.dp,
+        text = { Column { content() } }
     )
 }
 
@@ -1312,13 +1389,10 @@ fun GlassAlertDialog(
     val textColor = if (isDark) Color.White else Color.Black
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = if (isDark) Color(0xFF101015) else Color(0xFFF5F5F9),
-        shape = RoundedCornerShape(24.dp), tonalElevation = 0.dp,
-        modifier = Modifier
-            .border(0.5.dp, GlassDesign.glassBorderAccent(accent), RoundedCornerShape(24.dp))
-            .drawBehind { drawVignette(isDark, 0.03f) },
-        title = { Text(title, color = textColor.copy(alpha = 0.92f), fontWeight = FontWeight.SemiBold, fontSize = 18.sp) },
-        text = { Text(text, color = textColor.copy(alpha = 0.52f), fontSize = 14.sp, lineHeight = 20.sp) },
+        containerColor = if (isDark) Color(0xFF121214) else Color(0xFFF5F5F7),
+        shape = RoundedCornerShape(20.dp), tonalElevation = 0.dp,
+        title = { Text(title, color = textColor.copy(alpha = 0.95f), fontWeight = FontWeight.SemiBold, fontSize = 18.sp) },
+        text = { Text(text, color = textColor.copy(alpha = 0.6f), fontSize = 14.sp, lineHeight = 20.sp) },
         confirmButton = {
             TextButton(onClick = onConfirm, modifier = Modifier.padding(end = 4.dp)) {
                 Text(confirmText, color = confirmColor, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -1326,14 +1400,14 @@ fun GlassAlertDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismissAction) {
-                Text(dismissText, color = textColor.copy(alpha = 0.55f), fontSize = 15.sp)
+                Text(dismissText, color = textColor.copy(alpha = 0.6f), fontSize = 15.sp)
             }
         }
     )
 }
 
 // ══════════════════════════════════════════════════════════
-// SHARED COMPONENTS (без изменений)
+// SHARED COMPONENTS
 // ══════════════════════════════════════════════════════════
 
 @Composable
@@ -1366,10 +1440,9 @@ fun GhostImageViewer(url: String, onDismiss: () -> Unit) {
         Surface(
             onClick = onDismiss,
             modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).statusBarsPadding(),
-            shape = CircleShape, color = Color.White.copy(alpha = 0.07f),
-            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.12f))
+            shape = CircleShape, color = Color.White.copy(alpha = 0.08f)
         ) {
-            Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = 0.88f), modifier = Modifier.padding(10.dp).size(20.dp))
+            Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.padding(10.dp).size(20.dp))
         }
     }
 }
@@ -1379,11 +1452,10 @@ fun GhostActionItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        shape = RoundedCornerShape(14.dp), color = color.copy(alpha = 0.04f),
-        border = BorderStroke(0.5.dp, color.copy(alpha = 0.07f))
+        shape = RoundedCornerShape(14.dp), color = color.copy(alpha = 0.06f)
     ) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.size(34.dp), shape = RoundedCornerShape(10.dp), color = color.copy(alpha = 0.08f)) {
+            Surface(Modifier.size(34.dp), shape = RoundedCornerShape(10.dp), color = color.copy(alpha = 0.10f)) {
                 Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = color, modifier = Modifier.size(18.dp)) }
             }
             Spacer(Modifier.width(14.dp))

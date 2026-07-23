@@ -118,28 +118,28 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_25_26 = object : Migration(25, 26) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS ratchet_sessions (
-                        chatId TEXT NOT NULL PRIMARY KEY,
-                        rootKey TEXT NOT NULL,
-                        sendingChainKey TEXT NOT NULL,
-                        sendingSeqNum INTEGER NOT NULL,
-                        receivingChainKey TEXT NOT NULL,
-                        receivingSeqNum INTEGER NOT NULL,
-                        myRatchetPrivKeyWrapped TEXT NOT NULL,
-                        myRatchetPubKey TEXT NOT NULL,
-                        theirRatchetPubKey TEXT NOT NULL,
-                        pendingX3dhEphemeralPub TEXT,
-                        skippedMessageKeys TEXT NOT NULL DEFAULT '{}',
-                        replayWindowStart INTEGER NOT NULL DEFAULT 0,
-                        replayWindowBits INTEGER NOT NULL DEFAULT 0,
-                        theirIdentityFingerprint TEXT NOT NULL DEFAULT '',
-                        isTofuVerified INTEGER NOT NULL DEFAULT 0,
-                        tofuTimestamp INTEGER NOT NULL DEFAULT 0,
-                        sessionVersion INTEGER NOT NULL DEFAULT 4,
-                        createdAt INTEGER NOT NULL,
-                        lastActivityAt INTEGER NOT NULL
-                    )
-                """.trimIndent())
+            CREATE TABLE IF NOT EXISTS ratchet_sessions (
+                chatId TEXT NOT NULL PRIMARY KEY,
+                rootKey TEXT NOT NULL,
+                sendingChainKey TEXT NOT NULL,
+                sendingSeqNum INTEGER NOT NULL,
+                receivingChainKey TEXT NOT NULL,
+                receivingSeqNum INTEGER NOT NULL,
+                myRatchetPrivKeyWrapped TEXT NOT NULL,
+                myRatchetPubKey TEXT NOT NULL,
+           theirRatchetPubKey TEXT NOT NULL DEFAULT ''
+                pendingX3dhEphemeralPub TEXT,
+                skippedMessageKeys TEXT NOT NULL DEFAULT '{}',
+                replayWindowStart INTEGER NOT NULL DEFAULT 0,
+                replayWindowBits INTEGER NOT NULL DEFAULT 0,
+                theirIdentityFingerprint TEXT NOT NULL DEFAULT '',
+                isTofuVerified INTEGER NOT NULL DEFAULT 0,
+                tofuTimestamp INTEGER NOT NULL DEFAULT 0,
+                sessionVersion INTEGER NOT NULL DEFAULT 4,
+                createdAt INTEGER NOT NULL,
+                lastActivityAt INTEGER NOT NULL
+            )
+        """.trimIndent())
             }
         }
 

@@ -61,4 +61,15 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE chatId = :chatId")
     suspend fun deleteMessagesForChat(chatId: String)
+
+    @Query("""
+    UPDATE messages 
+    SET text = :text, 
+        isEdit = 1, 
+        isPlaintextCached = 1, 
+        seqNum = 0, 
+        ratchetPubKey = NULL 
+    WHERE fKey = :fKey
+""")
+    suspend fun updateEditedMessage(fKey: String, text: String)
 }
