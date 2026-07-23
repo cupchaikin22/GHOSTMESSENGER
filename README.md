@@ -38,7 +38,7 @@
    git clone https://github.com/cupchaikin22/GHOSTMESSENGER
 
 
-<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/6785e1fa-9f75-4f90-ae16-8d6182705e78" />
+##ВНИМАНИЯ БЕТА
 
 
 Помните, что это тестовая сборка. Мы не гарантируем идеальную работу и отсутствие сбоев
