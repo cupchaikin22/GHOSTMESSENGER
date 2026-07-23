@@ -348,128 +348,134 @@ fun ChatScreen(
         while (isActive) { myStatusRef.setValue(ServerValue.TIMESTAMP); delay(60000) }
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // ФИКС: те же 4 листенера, что и раньше, НО теперь дополнительно
+    // регистрируются в AppSessionManager. onDispose{} — основной путь
+    // отписки (срабатывает при уходе с экрана чата), AppSessionManager —
+    // страховка на случай, если процесс убьют посреди logout-гонки и
+    // Compose не успеет корректно продиспоузить. Порядок critical:
+    // untrack() снимает listener СРАЗУ ЖЕ, так что двойного removeEventListener
+    // не происходит — Firebase SDK идемпотентен к повторному remove.
+    // ────────────────────────────────────────────────────────────────
     DisposableEffect(recipientId) {
-        val nameListener =
-            usersRef.child(recipientId).addValueEventListener(object : ValueEventListener {
-                override fun onDataChange(s: DataSnapshot) {
-                    liveRecipientName =
-                        s.child("username").getValue(String::class.java) ?: liveRecipientName
-                    recipientSecurityLevel = s.child("securityLevel").getValue(Int::class.java) ?: 0
-                    recipientAvatarUrl = s.child("avatarUrl").getValue(String::class.java)
-                        ?: s.child("profileImage").getValue(String::class.java)
-                }
+        val recipientRef = usersRef.child(recipientId)
+        val recipientTypingRef = typingRef.child(recipientId)
 
-                override fun onCancelled(e: DatabaseError) {}
-            })
+        val nameListener = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) {
+                liveRecipientName =
+                    s.child("username").getValue(String::class.java) ?: liveRecipientName
+                recipientSecurityLevel = s.child("securityLevel").getValue(Int::class.java) ?: 0
+                recipientAvatarUrl = s.child("avatarUrl").getValue(String::class.java)
+                    ?: s.child("profileImage").getValue(String::class.java)
+            }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        AppSessionManager.track(recipientRef, nameListener)
+        recipientRef.addValueEventListener(nameListener)
 
-        val typingListener =
-            typingRef.child(recipientId).addValueEventListener(object : ValueEventListener {
-                override fun onDataChange(s: DataSnapshot) {
-                    isRecipientTyping = s.getValue(Boolean::class.java) ?: false
-                }
+        val typingListener = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) {
+                isRecipientTyping = s.getValue(Boolean::class.java) ?: false
+            }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        AppSessionManager.track(recipientTypingRef, typingListener)
+        recipientTypingRef.addValueEventListener(typingListener)
 
-                override fun onCancelled(e: DatabaseError) {}
-            })
-
-        val statusListener = statusRef.addValueEventListener(object : ValueEventListener {
+        val statusListener = object : ValueEventListener {
             override fun onDataChange(s: DataSnapshot) {
                 val lastSeen = s.getValue(Long::class.java) ?: 0L
                 statusText =
                     if (System.currentTimeMillis() - lastSeen < 120000) "в сети" else "был(а) недавно"
             }
-
             override fun onCancelled(e: DatabaseError) {}
-        })
+        }
+        AppSessionManager.track(statusRef, statusListener)
+        statusRef.addValueEventListener(statusListener)
 
         // ── Главный листенер сообщений: расшифровка рачет-сообщений ОДИН РАЗ здесь ──
+        val chatListener = object : ChildEventListener {
+            override fun onChildAdded(s: DataSnapshot, prev: String?) {
+                val fKey = s.key ?: return
+                val senderId = s.child("senderId").getValue(String::class.java) ?: ""
+                val remoteStatus = s.child("status").getValue(Int::class.java) ?: 1
+                if (senderId != myId && remoteStatus < 3) chatRef.child(fKey).child("status").setValue(3)
 
-        val chatListener = chatRef.addChildEventListener(object : ChildEventListener {
-        override fun onChildAdded(s: DataSnapshot, prev: String?) {
-            val fKey = s.key ?: return
-            val senderId = s.child("senderId").getValue(String::class.java) ?: ""
-            val remoteStatus = s.child("status").getValue(Int::class.java) ?: 1
-            if (senderId != myId && remoteStatus < 3) chatRef.child(fKey).child("status").setValue(3)
+                val rawText = s.child("text").getValue(String::class.java) ?: ""
+                val seqNum = s.child("seqNum").getValue(Int::class.java) ?: 0
+                val ratchetPubKey = s.child("ratchetPubKey").getValue(String::class.java)
+                val x3dhEphemeralPubKey = s.child("x3dhEphemeralPubKey").getValue(String::class.java)
+                val timestamp = s.child("timestamp").getValue(Long::class.java) ?: System.currentTimeMillis()
+                val encryptedReplyToText = s.child("replyToText").getValue(String::class.java)
+                val isEdited = s.child("isEdited").getValue(Boolean::class.java) ?: false
 
-            val rawText = s.child("text").getValue(String::class.java) ?: ""
-            val seqNum = s.child("seqNum").getValue(Int::class.java) ?: 0
-            val ratchetPubKey = s.child("ratchetPubKey").getValue(String::class.java)
-            val x3dhEphemeralPubKey = s.child("x3dhEphemeralPubKey").getValue(String::class.java)
-            val timestamp = s.child("timestamp").getValue(Long::class.java) ?: System.currentTimeMillis()
-            val encryptedReplyToText = s.child("replyToText").getValue(String::class.java)
-            val isEdited = s.child("isEdited").getValue(Boolean::class.java) ?: false
+                scope.launch(Dispatchers.IO) {
+                    val existingMsg = messageDao.getMessageByFirebaseKey(fKey)
 
-            scope.launch(Dispatchers.IO) {
-                val existingMsg = messageDao.getMessageByFirebaseKey(fKey)
+                    // 1. ЕСЛИ ЭТО НАШЕ СООБЩЕНИЕ (СВОЁ)
+                    if (senderId == myId) {
+                        if (existingMsg != null) {
+                            if (existingMsg.currentStatus != remoteStatus) {
+                                messageDao.insertMessage(existingMsg.copy(currentStatus = remoteStatus))
+                            }
+                        } else {
+                            val decryptedReplyText: String? = if (!encryptedReplyToText.isNullOrBlank()) {
+                                try { GhostCrypto.decryptMessage(encryptedReplyToText, chatSecretKey, chatId) } catch (e: Exception) { null }
+                            } else null
 
-                // 1. ЕСЛИ ЭТО НАШЕ СООБЩЕНИЕ (СВОЁ)
-                if (senderId == myId) {
-                    if (existingMsg != null) {
-                        // Мы его уже сохранили при нажатии "Отправить".
-                        // НЕ ТРОГАЕМ plaintext! Только обновляем статус если изменился.
-                        if (existingMsg.currentStatus != remoteStatus) {
-                            messageDao.insertMessage(existingMsg.copy(currentStatus = remoteStatus))
+                            messageDao.insertMessage(MessageEntity(
+                                chatId = chatId, senderId = senderId, text = rawText, timestamp = timestamp,
+                                isFromMe = true, fKey = fKey, seqNum = seqNum, ratchetPubKey = ratchetPubKey,
+                                rText = decryptedReplyText,
+                                isPlaintextCached = false, currentStatus = remoteStatus
+                            ))
                         }
-                    } else {
-                        // Эхо с другого устройства (например, с ПК или второго телефона).
-                        // Расшифровать E2EE своего устройства мы не можем, кладем как есть.
-                        val decryptedReplyText: String? = if (!encryptedReplyToText.isNullOrBlank()) {
-                            try { GhostCrypto.decryptMessage(encryptedReplyToText, chatSecretKey, chatId) } catch (e: Exception) { null }
-                        } else null
+                        return@launch
+                    }
 
+                    // 2. ЕСЛИ СООБЩЕНИЕ ЧУЖОЕ И УЖЕ ЕСТЬ В БАЗЕ — ИГНОРИРУЕМ
+                    if (existingMsg != null) return@launch
+
+                    // 3. ОБРАБОТКА ВХОДЯЩИХ СООБЩЕНИЙ ОТ СОБЕСЕДНИКА
+                    val decryptedReplyText: String? = if (!encryptedReplyToText.isNullOrBlank()) {
+                        try {
+                            GhostCrypto.decryptMessage(encryptedReplyToText, chatSecretKey, chatId)
+                        } catch (e: Exception) {
+                            Log.w("ChatScreen", "onChildAdded: reply preview decrypt failed fKey=$fKey: ${e.javaClass.simpleName}")
+                            null
+                        }
+                    } else null
+
+                    if (ratchetPubKey != null) {
+                        val plaintext = sessionManager.decryptMessage(
+                            chatId = chatId, myId = myId, recipientId = recipientId,
+                            incoming = IncomingMessage(
+                                ciphertext = rawText, seqNum = seqNum,
+                                ratchetPubKey = ratchetPubKey,
+                                x3dhEphemeralPubKey = x3dhEphemeralPubKey,
+                                senderId = senderId
+                            )
+                        )
+                        messageDao.insertMessage(MessageEntity(
+                            chatId = chatId, senderId = senderId,
+                            text = plaintext ?: "[не удалось расшифровать]",
+                            timestamp = timestamp, isFromMe = false, fKey = fKey,
+                            seqNum = seqNum, ratchetPubKey = ratchetPubKey,
+                            rText = decryptedReplyText,
+                            isPlaintextCached = true, currentStatus = remoteStatus
+                        ))
+                    } else {
                         messageDao.insertMessage(MessageEntity(
                             chatId = chatId, senderId = senderId, text = rawText, timestamp = timestamp,
-                            isFromMe = true, fKey = fKey, seqNum = seqNum, ratchetPubKey = ratchetPubKey,
+                            isFromMe = false, fKey = fKey,
                             rText = decryptedReplyText,
+                            isEdit = isEdited,
                             isPlaintextCached = false, currentStatus = remoteStatus
                         ))
                     }
-                    return@launch
-                }
-
-                // 2. ЕСЛИ СООБЩЕНИЕ ЧУЖОЕ И УЖЕ ЕСТЬ В БАЗЕ — ИГНОРИРУЕМ
-                if (existingMsg != null) return@launch
-
-                // 3. ОБРАБОТКА ВХОДЯЩИХ СООБЩЕНИЙ ОТ СОБЕСЕДНИКА
-                val decryptedReplyText: String? = if (!encryptedReplyToText.isNullOrBlank()) {
-                    try {
-                        GhostCrypto.decryptMessage(encryptedReplyToText, chatSecretKey, chatId)
-                    } catch (e: Exception) {
-                        Log.w("ChatScreen", "onChildAdded: reply preview decrypt failed fKey=$fKey: ${e.javaClass.simpleName}")
-                        null
-                    }
-                } else null
-
-                if (ratchetPubKey != null) {
-                    // Рачет-сообщение от собеседника
-                    val plaintext = sessionManager.decryptMessage(
-                        chatId = chatId, myId = myId, recipientId = recipientId,
-                        incoming = IncomingMessage(
-                            ciphertext = rawText, seqNum = seqNum,
-                            ratchetPubKey = ratchetPubKey,
-                            x3dhEphemeralPubKey = x3dhEphemeralPubKey,
-                            senderId = senderId
-                        )
-                    )
-                    messageDao.insertMessage(MessageEntity(
-                        chatId = chatId, senderId = senderId,
-                        text = plaintext ?: "[не удалось расшифровать]",
-                        timestamp = timestamp, isFromMe = false, fKey = fKey,
-                        seqNum = seqNum, ratchetPubKey = ratchetPubKey,
-                        rText = decryptedReplyText,
-                        isPlaintextCached = true, currentStatus = remoteStatus
-                    ))
-                } else {
-                    // Legacy-сообщение от собеседника
-                    messageDao.insertMessage(MessageEntity(
-                        chatId = chatId, senderId = senderId, text = rawText, timestamp = timestamp,
-                        isFromMe = false, fKey = fKey,
-                        rText = decryptedReplyText,
-                        isEdit = isEdited,
-                        isPlaintextCached = false, currentStatus = remoteStatus
-                    ))
                 }
             }
-        }
 
             override fun onChildChanged(s: DataSnapshot, prev: String?) {
                 val fKey = s.key ?: return
@@ -480,15 +486,7 @@ fun ChatScreen(
                 scope.launch(Dispatchers.IO) {
                     val old = messageDao.getMessageByFirebaseKey(fKey) ?: return@launch
 
-                    // ФИКС БАГА №3b: раньше onChildChanged обновлял ТОЛЬКО isEdit/currentStatus
-                    // и никогда не читал новый text — правка на стороне собеседника не долетала
-                    // вообще, только бейдж "изменено" без изменения содержимого.
                     if (isEdited && newCiphertext != null && newCiphertext != old.text) {
-                        // Редактирование ВСЕГДА идёт через legacy-схему (см. onSend/editTarget) —
-                        // Double Ratchet принципиально несовместим с "изменить уже отправленное":
-                        // message key рачета уничтожается сразу после первого использования.
-                        // Поэтому здесь — строго GhostCrypto.decryptMessage с chatSecretKey,
-                        // НЕ пытаемся трактовать это как ratchet-payload.
                         val decrypted = if (chatSecretKey.isNotBlank()) {
                             try {
                                 GhostCrypto.decryptMessage(newCiphertext, chatSecretKey, chatId)
@@ -506,9 +504,6 @@ fun ChatScreen(
                                 text = decrypted ?: old.text,
                                 isEdit = true,
                                 isPlaintextCached = decrypted != null,
-                                // Сообщение навсегда переходит на legacy-схему после правки —
-                                // сбрасываем ratchet-метаданные, чтобы будущий safeDecryptSync
-                                // не принял его за ratchet-payload по унаследованному seqNum.
                                 seqNum = if (decrypted != null) 0 else old.seqNum,
                                 ratchetPubKey = if (decrypted != null) null else old.ratchetPubKey,
                                 currentStatus = newStatus ?: old.currentStatus
@@ -530,15 +525,17 @@ fun ChatScreen(
             }
             override fun onChildMoved(s: DataSnapshot, prev: String?) {}
             override fun onCancelled(error: DatabaseError) {}
-        })
+        }
+        AppSessionManager.track(chatRef, chatListener)
+        chatRef.addChildEventListener(chatListener)
+
         onDispose {
-            usersRef.child(recipientId).removeEventListener(nameListener)
-            typingRef.child(recipientId).removeEventListener(typingListener)
-            statusRef.removeEventListener(statusListener)
-            chatRef.removeEventListener(chatListener)
+            AppSessionManager.untrack(recipientRef, nameListener)
+            AppSessionManager.untrack(recipientTypingRef, typingListener)
+            AppSessionManager.untrack(statusRef, statusListener)
+            AppSessionManager.untrack(chatRef, chatListener)
         }
     }
-
     val chatAccent = Color(currentSettings.globalAccentColor)
     val bgColor = FlatDesign.screenBackground(Color(currentSettings.globalBackgroundColor))
     val isDark = bgColor.luminance() < 0.5f

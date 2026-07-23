@@ -113,8 +113,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // ── MIGRATION 25 → 26: таблица ratchet_sessions (новая, ранее не выпускалась —
-        // сразу включаем pendingX3dhEphemeralPub, отдельная ALTER-миграция под неё не нужна)
+        // обновили нахуй тут залупу чтоб не потерялись данные
         private val MIGRATION_25_26 = object : Migration(25, 26) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("""
@@ -127,7 +126,7 @@ abstract class AppDatabase : RoomDatabase() {
                 receivingSeqNum INTEGER NOT NULL,
                 myRatchetPrivKeyWrapped TEXT NOT NULL,
                 myRatchetPubKey TEXT NOT NULL,
-           theirRatchetPubKey TEXT NOT NULL DEFAULT ''
+                theirRatchetPubKey TEXT NOT NULL DEFAULT '',
                 pendingX3dhEphemeralPub TEXT,
                 skippedMessageKeys TEXT NOT NULL DEFAULT '{}',
                 replayWindowStart INTEGER NOT NULL DEFAULT 0,

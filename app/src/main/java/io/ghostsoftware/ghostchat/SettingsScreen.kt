@@ -204,16 +204,17 @@ fun SettingsScreen(database: AppDatabase, onBack: () -> Unit, onLogout: () -> Un
                 GhostItem(Icons.Default.DeleteForever, "Panic Button", "Wipe all local data", Color.Red, true) {
                     scope.launch(Dispatchers.IO) {
 
+                        GhostKeyManager(context).clearKeys()
+
+
                         database.clearAllTables()
 
 
-                        val prefs = context.getSharedPreferences("ghost_keys", android.content.Context.MODE_PRIVATE)
-                        prefs.edit().clear().commit()
-
-                        // 3. Отправляем сигнал сброса сессии в Firebase для всех активных чатов
                         FirebaseDatabase.getInstance().getReference("users").child(uid).child("sessionResetToken").setValue(System.currentTimeMillis())
 
-                        // 4. Выходим из аккаунта или закрываем приложение
+
+                        AppSessionManager.performLogout(database)
+
                         withContext(Dispatchers.Main) {
                             onLogout()
                         }

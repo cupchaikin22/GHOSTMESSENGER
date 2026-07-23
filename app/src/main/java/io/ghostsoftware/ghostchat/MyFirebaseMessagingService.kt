@@ -47,10 +47,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 val chatId = ChatUtils.getChatId(myId, senderId)
 
                 // Проверка Ed25519 подписи (если включён уровень безопасности >= 1)
-                if (securityLevel >= 1 && signature.isNotEmpty()) {
-                    val isValid = verifyMessageSignature(senderId, encryptedText, signature)
-                    if (!isValid) {
-                        Log.w("FCMService", "Invalid message signature from $senderId")
+                if (securityLevel >= 1) {
+                    if (signature.isEmpty() || !verifyMessageSignature(senderId, encryptedText, signature)) {
+                        Log.w("FCMService", "Missing/invalid signature at securityLevel=$securityLevel from $senderId")
                         showSecurityAlert(senderId)
                         return@launch
                     }

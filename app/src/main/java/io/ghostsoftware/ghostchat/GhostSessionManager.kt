@@ -298,7 +298,7 @@ class GhostSessionManager(
 
         val myRatchetPriv = X25519.generatePrivateKey()
         val myRatchetPub  = X25519.publicFromPrivate(myRatchetPriv)
-        val bootstrapDh   = X25519.computeSharedSecret(myRatchetPriv, aliceFirstRatchet)
+        val bootstrapDh   =computeSharedSecretSafe(myRatchetPriv, aliceFirstRatchet)
         val (newRoot, mySendingChain) = GhostRatchet.kdfRootChain(x3dhRoot, bootstrapDh)
 
         val myRatchetPrivWrapped = GhostKeyStore.wrapKey(myRatchetPriv, GhostKeyStore.ALIAS_RATCHET_WRAP)
@@ -357,6 +357,15 @@ class GhostSessionManager(
             theirRatchetPubKey      = newTheirPubKeyBase64,
             skippedMessageKeys      = "{}"
         )
+    }
+
+    fun computeSharedSecretSafe(priv: ByteArray, pub: ByteArray): ByteArray {
+        // ВНУТРИ ВЫЗЫВАЕМ X25519, А НЕ САМУ СЕБЯ!
+        val shared = X25519.computeSharedSecret(priv, pub)
+        require(!shared.all { it == 0.toByte() }) {
+            "Rejected contributory-behavior shared secret (low-order point)"
+        }
+        return shared
     }
 
     // ========================================================

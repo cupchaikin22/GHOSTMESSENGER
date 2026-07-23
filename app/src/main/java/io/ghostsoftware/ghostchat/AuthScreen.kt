@@ -1,5 +1,6 @@
 package io.ghostsoftware.ghostchat
 
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,19 +26,10 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.database.FirebaseDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
-/**
- * ✅ ИСПРАВЛЕНО: Экран аутентификации с новой криптосистемой (GhostCrypto + GhostKeyManager)
- *
- * Изменения:
- * - EncryptionManager полностью заменён на GhostKeyManager
- * - isKeyGenerated() → hasKeys()
- * - generateIdentityKeys() → generateAndSaveKeys()
- * - getPublicKeyString() → getX25519PublicKeyBase64()
- * - Все типы исправлены (Cannot infer type устранён)
- * - Логика генерации ключей, публикации publicKey и индикатора безопасности сохранена
- * - Base64-формат ключей полностью совместим с GhostCrypto
- */
 @Composable
 fun AuthScreen(onAuthSuccess: () -> Unit) {
     var isLoginMode by remember { mutableStateOf(true) }
@@ -50,9 +42,11 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
     val context = LocalContext.current
     val auth = FirebaseAuth.getInstance()
-    val keyManager = remember { GhostKeyManager(context) }   // ← ЗАМЕНА EncryptionManager
+    val keyManager = remember { GhostKeyManager(context) }
+    // Нужен для суспенд-вызова keyManager.ensureKeysExist() — сама AuthScreen
+    // не suspend-функция, а Firebase-колбэки (addOnCompleteListener) тоже нет.
+    val scope = rememberCoroutineScope()
 
-    // ✅ НОВОЕ: Валидация пароля в реальном времени
     val passwordStrength = remember(password) {
         if (!isLoginMode) calculatePasswordStrength(password) else null
     }
@@ -74,8 +68,7 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Индикатор безопасности
-        val isKeyReady = keyManager.hasKeys()                    // ← ИЗМЕНЕНО
+        val isKeyReady = keyManager.hasKeys()
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -96,7 +89,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
         Spacer(modifier = Modifier.height(40.dp))
 
-        // ✅ НОВОЕ: Отображение ошибок
         errorMessage?.let { error ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.Red.copy(alpha = 0.2f)),
@@ -112,7 +104,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Поле имени (только для регистрации)
         if (!isLoginMode) {
             GhostInput(
                 value = username,
@@ -125,7 +116,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Поле email
         GhostInput(
             value = email,
             onValueChange = {
@@ -141,7 +131,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Поле пароля с индикатором видимости
         GhostInput(
             value = password,
             onValueChange = {
@@ -161,7 +150,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
             }
         )
 
-        // ✅ НОВОЕ: Индикатор силы пароля (только при регистрации)
         if (!isLoginMode && passwordStrength != null) {
             Spacer(modifier = Modifier.height(8.dp))
             PasswordStrengthIndicator(passwordStrength)
@@ -169,7 +157,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
         Spacer(modifier = Modifier.height(40.dp))
 
-        // Кнопка входа/регистрации
         if (isLoading) {
             CircularProgressIndicator(color = Color.White)
         } else {
@@ -177,7 +164,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                 onClick = {
                     errorMessage = null
 
-                    // Валидация перед отправкой
                     val validationError = validateInput(
                         isLoginMode = isLoginMode,
                         email = email,
@@ -198,7 +184,11 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                             email = email,
                             password = password,
                             keyManager = keyManager,
-                            onSuccess = onAuthSuccess,
+                            scope = scope,
+                            onSuccess = {
+                                isLoading = false
+                                onAuthSuccess()
+                            },
                             onError = { error ->
                                 isLoading = false
                                 errorMessage = error
@@ -211,6 +201,7 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                             password = password,
                             username = username,
                             keyManager = keyManager,
+                            scope = scope,
                             onSuccess = {
                                 isLoginMode = true
                                 isLoading = false
@@ -256,21 +247,16 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
     }
 }
 
-/**
- * ✅ НОВОЕ: Валидация всех полей
- */
 private fun validateInput(
     isLoginMode: Boolean,
     email: String,
     password: String,
     username: String
 ): String? {
-    // Проверка email
     if (!isValidEmail(email)) {
         return "Некорректный email адрес"
     }
 
-    // Проверка пароля
     if (isLoginMode) {
         if (password.isEmpty()) {
             return "Введите пароль"
@@ -282,7 +268,6 @@ private fun validateInput(
         }
     }
 
-    // Проверка имени (только при регистрации)
     if (!isLoginMode && !isValidUsername(username)) {
         return "Имя: 3-20 символов, только буквы и цифры"
     }
@@ -290,9 +275,6 @@ private fun validateInput(
     return null
 }
 
-/**
- * ✅ НОВОЕ: Строгая валидация пароля
- */
 private fun validatePassword(password: String): String? {
     if (password.length < 12) {
         return "Пароль должен содержать минимум 12 символов"
@@ -306,14 +288,11 @@ private fun validatePassword(password: String): String? {
     if (!hasUpperCase) return "Пароль должен содержать заглавные буквы"
     if (!hasLowerCase) return "Пароль должен содержать строчные буквы"
     if (!hasDigit) return "Пароль должен содержать цифры"
-    if (!hasSpecial) return "Пароль должен содержать спецсимволы (!@#$%^&* и т.д.)"
+    if (!hasSpecial) return "Пароль должен содержать спецсимволы (!@#\$%^&* и т.д.)"
 
     return null
 }
 
-/**
- * ✅ НОВОЕ: Расчет силы пароля
- */
 private fun calculatePasswordStrength(password: String): PasswordStrength {
     var score = 0
 
@@ -332,28 +311,30 @@ private fun calculatePasswordStrength(password: String): PasswordStrength {
     }
 }
 
-/**
- * Валидация email
- */
 private fun isValidEmail(email: String): Boolean {
     return android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
 }
 
-/**
- * Валидация имени пользователя
- */
 private fun isValidUsername(username: String): Boolean {
-    return username.length in 3..20 && username.matches(Regex("^[a-zA-Z0-9_]+$"))
+    return username.length in 3..20 && username.matches(Regex("^[a-zA-Z0-9_]+\$"))
 }
 
 /**
- * Обработка входа
+ * Обработка входа.
+ *
+ * ФИКС: раньше публичный ключ писался в устаревший путь users/{uid}/publicKey.
+ * GhostSessionManager.getRecipientPublicKey() и весь X3DH читают из
+ * users/{uid}/keys/x25519 — рассинхрон путей означал, что собеседники могли
+ * не находить актуальный identity-ключ. ensureKeysExist() — единственная
+ * точка входа: сама решает, нужна ли регенерация (hasKeys() + валидность
+ * unwrap из Keystore), и публикует в ПРАВИЛЬНЫЙ путь keys/x25519 + keys/ed25519.
  */
 private fun handleLogin(
     auth: FirebaseAuth,
     email: String,
     password: String,
     keyManager: GhostKeyManager,
+    scope: CoroutineScope,
     onSuccess: () -> Unit,
     onError: (String) -> Unit
 ) {
@@ -362,20 +343,14 @@ private fun handleLogin(
             if (task.isSuccessful) {
                 val user = auth.currentUser
                 if (user != null && user.isEmailVerified) {
-                    // Синхронизация ключей при входе
-                    if (!keyManager.hasKeys()) {
-                        keyManager.generateAndSaveKeys()
-                    }
-
-                    val currentPubKey = keyManager.getX25519PublicKeyBase64() ?: ""
-                    FirebaseDatabase.getInstance()
-                        .getReference("users")
-                        .child(user.uid)
-                        .child("publicKey")
-                        .setValue(currentPubKey)
-                        .addOnCompleteListener {
-                            onSuccess()
+                    scope.launch {
+                        try {
+                            keyManager.ensureKeysExist()
+                        } catch (e: Exception) {
+                            Log.e("AuthScreen", "ensureKeysExist on login failed: ${e.javaClass.simpleName}")
                         }
+                        onSuccess()
+                    }
                 } else {
                     auth.signOut()
                     onError("Email не подтвержден. Проверьте почту.")
@@ -391,7 +366,17 @@ private fun handleLogin(
 }
 
 /**
- * Обработка регистрации
+ * Обработка регистрации.
+ *
+ * ФИКС: раньше здесь был БЕЗУСЛОВНЫЙ keyManager.generateAndSaveKeys() — если
+ * на устройстве уже лежал валидный identity-ключ (повторная попытка
+ * регистрации после сетевого сбоя между createUser и этим блоком, либо
+ * relogin в рамках одного процесса), он затирался НОВЫМ ключом. Все
+ * ratchet-сессии, поднятые под старым identity-ключом с другими контактами,
+ * моментально становились нерасшифровываемыми (AEADBadTagException), так
+ * как X3DH у собеседника всё ещё считает актуальным старый публичный ключ.
+ * ensureKeysExist() генерирует ключи ТОЛЬКО если их реально нет или они
+ * повреждены (см. GhostKeyManager.ensureKeysExist).
  */
 private fun handleRegistration(
     auth: FirebaseAuth,
@@ -399,6 +384,7 @@ private fun handleRegistration(
     password: String,
     username: String,
     keyManager: GhostKeyManager,
+    scope: CoroutineScope,
     onSuccess: () -> Unit,
     onError: (String) -> Unit
 ) {
@@ -407,26 +393,40 @@ private fun handleRegistration(
             if (regTask.isSuccessful) {
                 val uid = auth.currentUser?.uid ?: ""
 
-                // Генерируем ключи
-                keyManager.generateAndSaveKeys()
-                val pubKey = keyManager.getX25519PublicKeyBase64() ?: ""
+                scope.launch {
+                    try {
+                        keyManager.ensureKeysExist()
+                    } catch (e: Exception) {
+                        Log.e("AuthScreen", "ensureKeysExist on register failed: ${e.javaClass.simpleName}")
+                    }
 
-                val userData = UserProfile(
-                    uid = uid,
-                    username = username,
-                    email = email,
-                    publicKey = pubKey
-                )
+                    val pubKey = keyManager.getX25519PublicKeyBase64() ?: ""
 
-                FirebaseDatabase.getInstance()
-                    .getReference("users")
-                    .child(uid)
-                    .setValue(userData)
-                    .addOnCompleteListener {
-                        // Отправляем email подтверждения
+                    val userData = UserProfile(
+                        uid = uid,
+                        username = username,
+                        email = email,
+                        publicKey = pubKey
+                    )
+
+                    try {
+                        FirebaseDatabase.getInstance()
+                            .getReference("users")
+                            .child(uid)
+                            .setValue(userData)
+                            .await()
+
+                        // Публикуем ключи В ПРАВИЛЬНЫЙ путь keys/x25519, keys/ed25519 —
+                        // именно оттуда их читает GhostKeyManager.getRecipientPublicKey().
+                        keyManager.publishPublicKeysIfNeeded()
+
                         auth.currentUser?.sendEmailVerification()
                         onSuccess()
+                    } catch (e: Exception) {
+                        Log.e("AuthScreen", "registration data publish failed: ${e.javaClass.simpleName}")
+                        onError("Ошибка регистрации: ${e.message}")
                     }
+                }
             } else {
                 val errorMsg = when (regTask.exception) {
                     is FirebaseAuthUserCollisionException -> "Email уже зарегистрирован"
@@ -438,9 +438,6 @@ private fun handleRegistration(
         }
 }
 
-/**
- * ✅ НОВОЕ: Индикатор силы пароля
- */
 @Composable
 private fun PasswordStrengthIndicator(strength: PasswordStrength) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -458,9 +455,6 @@ private fun PasswordStrengthIndicator(strength: PasswordStrength) {
     }
 }
 
-/**
- * Сила пароля
- */
 private enum class PasswordStrength(
     val progress: Float,
     val color: Color,
@@ -471,9 +465,6 @@ private enum class PasswordStrength(
     STRONG(1f, Color.Green, "Надежный пароль")
 }
 
-/**
- * Компонент ввода
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GhostInput(

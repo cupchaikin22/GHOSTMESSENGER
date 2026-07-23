@@ -29,29 +29,16 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    // ✅ ЗАМЕНЕНО: EncryptionManager → GhostKeyManager
     private lateinit var keyManager: GhostKeyManager
     private val database by lazy { AppDatabase.getDatabase(this) }
 
-    // Compose-совместимый флаг: true только после того, как ensureKeysExist()
-    // реально завершился (успешно или с уже залогированной ошибкой).
-    // mutableStateOf, а не обычный var — Compose должен перекомпоноваться при смене.
     private val keysReadyState = androidx.compose.runtime.mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         FirebaseApp.initializeApp(this)
 
-        // ✅ ЗАМЕНЕНО: Инициализируем GhostKeyManager
-        // ensureKeysExist() генерирует X25519 + Ed25519 ключи при первом запуске
-        // и публикует публичные ключи в Firebase. Не падает у новых пользователей.
         keyManager = GhostKeyManager(this)
-        // ВАЖНО: keysReadyState — единственный источник правды о готовности identity-ключей.
-        // ChatScreen/GhostChatApp обязаны дождаться true ПЕРЕД любым вызовом encryptMessage.
-        // Раньше здесь был "fire-and-forget" launch без синхронизации с UI — при быстром
-        // старте (уже залогиненный юзер, startScreen="list") ChatScreen мог открыться и
-        // отправить сообщение до того, как ensureKeysExist() успевал сгенерировать ключи,
-        // что валило GhostSessionManager.createInitiatorSession в фатальный краш.
         lifecycleScope.launch {
             try {
                 keyManager.ensureKeysExist()
@@ -62,7 +49,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Динамический ANTI-SCREENSHOT
         lifecycleScope.launch {
             database.messageDao().getSettings().collectLatest { settings ->
                 val isSecure = (settings?.securityLevel ?: 1) >= 2
@@ -93,7 +79,6 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = GhostTheme.backgroundColor
                 ) {
-                    // ✅ Передаём keyManager И флаг готовности ключей в приложение
                     val keysReady by keysReadyState
                     GhostChatApp(database = database, keyManager = keyManager, keysReady = keysReady)
                 }
@@ -118,9 +103,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Модель данных для входящих звонков
- */
 data class IncomingCallData(
     val callId: String,
     val callerId: String,
@@ -130,23 +112,20 @@ data class IncomingCallData(
     val isVideoCall: Boolean
 )
 
-/**
- * ГЛАВНОЕ ПРИЛОЖЕНИЕ С WEBRTC ИНТЕГРАЦИЕЙ
- */
 @Composable
 fun GhostChatApp(
     database: AppDatabase,
-    // ✅ ДОБАВЛЕНО: keyManager прокидывается вниз к ChatScreen
     keyManager: GhostKeyManager,
-    // ✅ ДОБАВЛЕНО: true только когда ensureKeysExist() завершился.
-    // Пока false — держим splash, чтобы ChatScreen физически не мог
-    // вызвать encryptMessage без identity-ключа (фикс краша createInitiatorSession).
     keysReady: Boolean
 ) {
     val auth = FirebaseAuth.getInstance()
     val context = LocalContext.current
     val activity = context as? Activity
     val myUserId = auth.currentUser?.uid ?: ""
+
+    // Отдельный scope уровня приложения — нужен для performLogout(), так как
+    // это suspend-функция, а onLogout колбэк в SettingsScreen — обычная лямбда.
+    val appScope = rememberCoroutineScope()
 
     if (!keysReady) {
         androidx.compose.foundation.layout.Box(
@@ -160,14 +139,12 @@ fun GhostChatApp(
         return
     }
 
-    // WebRTC Manager
     val webRTCManager = remember(myUserId) {
         if (myUserId.isNotEmpty()) {
             WebRTCManager(context, myUserId)
         } else null
     }
 
-    // Состояние навигации
     val startScreen = if (auth.currentUser != null && auth.currentUser!!.isEmailVerified) {
         "list"
     } else {
@@ -179,7 +156,6 @@ fun GhostChatApp(
     var showExitDialog by remember { mutableStateOf(false) }
     var incomingCallData by remember { mutableStateOf<IncomingCallData?>(null) }
 
-    // Запрос разрешений для звонков
     var permissionsGranted by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -201,7 +177,6 @@ fun GhostChatApp(
         }
     }
 
-    // Инициализация WebRTC после входа
     LaunchedEffect(auth.currentUser, webRTCManager) {
         if (auth.currentUser != null && webRTCManager != null && !permissionsGranted) {
             Log.d("MainActivity", "Requesting permissions...")
@@ -215,7 +190,6 @@ fun GhostChatApp(
         }
     }
 
-    // Очистка WebRTC при выходе
     DisposableEffect(webRTCManager) {
         onDispose {
             Log.d("MainActivity", "Disposing WebRTC")
@@ -223,7 +197,6 @@ fun GhostChatApp(
         }
     }
 
-    // Прослушивание входящих звонков
     DisposableEffect(myUserId, webRTCManager) {
         if (myUserId.isEmpty() || webRTCManager == null) {
             return@DisposableEffect onDispose { }
@@ -285,14 +258,14 @@ fun GhostChatApp(
             }
         }
 
+        AppSessionManager.track(callsRef, listener)
         callsRef.addValueEventListener(listener)
 
         onDispose {
-            callsRef.removeEventListener(listener)
+            AppSessionManager.untrack(callsRef, listener)
         }
     }
 
-    // Deep links из уведомлений
     LaunchedEffect(activity?.intent) {
         val intent = activity?.intent
         val chatId = intent?.getStringExtra("chat_id")
@@ -306,14 +279,12 @@ fun GhostChatApp(
         }
     }
 
-    // Синхронизация FCM токена
     LaunchedEffect(auth.currentUser) {
         if (auth.currentUser != null) {
             syncFcmToken()
         }
     }
 
-    // Диалог подтверждения выхода
     if (showExitDialog) {
         ExitConfirmationDialog(
             onConfirm = { activity?.finish() },
@@ -321,7 +292,6 @@ fun GhostChatApp(
         )
     }
 
-    // НАВИГАЦИЯ
     when (currentScreen) {
         "auth" -> {
             BackHandler { showExitDialog = true }
@@ -351,7 +321,6 @@ fun GhostChatApp(
 
             ChatScreen(
                 database = database,
-                // ✅ ДОБАВЛЕНО: keyManager передаётся в ChatScreen
                 keyManager = keyManager,
                 recipientId = selectedUser?.uid ?: "",
                 recipientName = selectedUser?.username ?: stringResource(R.string.unknown_ghost),
@@ -425,7 +394,6 @@ fun GhostChatApp(
             )
         }
 
-        // ЭКРАН ВХОДЯЩЕГО ЗВОНКА
         "incoming_call" -> {
             BackHandler {
                 incomingCallData?.let { callData ->
@@ -497,7 +465,6 @@ fun GhostChatApp(
             }
         }
 
-        // ЭКРАН АКТИВНОГО ЗВОНКА
         "call" -> {
             BackHandler {
                 webRTCManager?.endCall()
@@ -525,20 +492,27 @@ fun GhostChatApp(
                 database = database,
                 onBack = { currentScreen = "list" },
                 onLogout = {
-                    updateOnlineStatus(System.currentTimeMillis().toString())
-                    auth.signOut()
-                    webRTCManager?.dispose()
-                    currentScreen = "auth"
-                    selectedUser = null
+                    // ФИКС: раньше здесь было "auth.signOut()" напрямую — без снятия
+                    // Firebase-листенеров и без очистки ratchet_sessions. Теперь
+                    // строгий порядок: сначала обрываем звонок и WebRTC (сигнальные
+                    // листенеры звонков сами уходят вместе с ним), затем
+                    // AppSessionManager.performLogout() снимает ВСЕ трекнутые
+                    // Firebase-листенеры, чистит ratchet_sessions в Room и
+                    // ТОЛЬКО ПОТОМ зовёт FirebaseAuth.signOut(). Экран меняем на
+                    // "auth" уже после того, как логаут гарантированно завершён.
+                    appScope.launch {
+                        webRTCManager?.endCall()
+                        webRTCManager?.dispose()
+                        AppSessionManager.performLogout(database)
+                        currentScreen = "auth"
+                        selectedUser = null
+                    }
                 }
             )
         }
     }
 }
 
-/**
- * ДИАЛОГ ПОДТВЕРЖДЕНИЯ ВЫХОДА
- */
 @Composable
 fun ExitConfirmationDialog(
     onConfirm: () -> Unit,
@@ -585,9 +559,6 @@ fun ExitConfirmationDialog(
     )
 }
 
-/**
- * ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
- */
 private fun syncFcmToken() {
     val myId = FirebaseAuth.getInstance().currentUser?.uid ?: return
     FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->

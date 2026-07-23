@@ -15,15 +15,14 @@ import com.google.crypto.tink.subtle.XChaCha20Poly1305
 import java.security.SecureRandom
 import javax.crypto.AEADBadTagException
 
-// ============================================================
-// DATA CLASSES
-// ============================================================
 
-/**
- * X25519 ключевая пара для шифрования.
- *   privateKey → только EncryptedSharedPreferences, НИКОГДА не передавать по сети
- *   publicKey  → Firebase users/{uid}/keys/x25519
- */
+fun computeSharedSecretSafe(priv: ByteArray, pub: ByteArray): ByteArray {
+    val shared = X25519.computeSharedSecret(priv, pub)
+    require(!shared.all { it == 0.toByte() }) {
+        "Rejected contributory-behavior shared secret (low-order point)"
+    }
+    return shared
+}
 data class GhostKeyPair(
     val privateKey: ByteArray,
     val publicKey: ByteArray
@@ -350,7 +349,7 @@ object GhostCrypto {
             val ephPriv = X25519.generatePrivateKey()
             val ephPub  = X25519.publicFromPrivate(ephPriv)
 
-            val sharedSecret = X25519.computeSharedSecret(ephPriv, recipientPublicKey)
+            val sharedSecret = computeSharedSecretSafe(ephPriv, recipientPublicKey)
             val wrapKey = Hkdf.computeHkdf(
                 HKDF_ALG,
                 sharedSecret,
@@ -375,13 +374,7 @@ object GhostCrypto {
     fun encryptKeyForUser(chatKeyBase64: String, recipientPublicKeyBase64: String): String =
         encryptKeyForUser(chatKeyBase64.fromBase64(), recipientPublicKeyBase64.fromBase64())
 
-    /**
-     * Дешифрует ключ чата своим X25519 приватным ключом (ECIES).
-     *
-     * @param encryptedKeyBundle  Base64-строка из [encryptKeyForUser]
-     * @param myPrivateKey        X25519 приватный ключ (32 байта)
-     * @return 32-байтный ключ чата
-     */
+
     fun decryptKeyForUser(encryptedKeyBundle: String, myPrivateKey: ByteArray): ByteArray {
         require(myPrivateKey.size == KEY_SIZE) { "Private key must be $KEY_SIZE bytes" }
 
@@ -402,7 +395,7 @@ object GhostCrypto {
             val ephPub     = bundle.copyOfRange(0, KEY_SIZE)
             val encChatKey = bundle.copyOfRange(KEY_SIZE, bundle.size)
 
-            val sharedSecret = X25519.computeSharedSecret(myPrivateKey, ephPub)
+            val sharedSecret = computeSharedSecretSafe(myPrivateKey, ephPub)
             val wrapKey = Hkdf.computeHkdf(
                 HKDF_ALG,
                 sharedSecret,

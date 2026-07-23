@@ -1,5 +1,6 @@
 package io.ghostsoftware.ghostchat
 
+import android.util.Log
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -67,7 +68,8 @@ fun ChatListScreen(
 
     val activeChats by messageDao.getAllLastMessages().collectAsState(initial = emptyList())
 
-    // Улучшенная логика поиска (UID + ProfileID)
+    // Улучшенная логика поиска (UID + ProfileID) — единоразовые события,
+    // сами себя снимают после первого срабатывания, утечки листенеров нет.
     LaunchedEffect(searchQuery) {
         val query = searchQuery.trim()
         if (query.isNotEmpty()) {
@@ -75,14 +77,12 @@ fun ChatListScreen(
             delay(400) // Debounce
             val usersRef = FirebaseDatabase.getInstance().getReference("users")
 
-            // 1. Пробуем найти как прямой UID
             usersRef.child(query).get().addOnSuccessListener { s ->
                 val profileByUid = s.getValue(UserProfile::class.java)
                 if (profileByUid != null && profileByUid.uid.isNotEmpty()) {
                     searchResult = profileByUid
                     isSearching = false
                 } else {
-                    // 2. Если не нашли, ищем по полю profileId
                     usersRef.orderByChild("profileId").equalTo(query)
                         .addListenerForSingleValueEvent(object : ValueEventListener {
                             override fun onDataChange(snapshot: DataSnapshot) {
@@ -100,10 +100,24 @@ fun ChatListScreen(
         }
     }
 
-    // Мониторинг входящих сообщений
-    LaunchedEffect(myId) {
+    // ────────────────────────────────────────────────────────────────
+    // ФИКС: раньше это был LaunchedEffect(myId) с addChildEventListener
+    // БЕЗ единого removeEventListener — при каждом повторном входе на этот
+    // экран (например, возврат из чата) вешался НОВЫЙ листенер поверх
+    // старого, а при logout ни один из них не снимался вообще. После
+    // FirebaseAuth.signOut() эти листенеры продолжали дёргаться на любое
+    // изменение в "messages" и получали PERMISSION_DENIED от security
+    // rules — токен уже недействителен. Отсюда спам в logcat.
+    //
+    // DisposableEffect(myId) гарантирует РОВНО ОДИН листенер на время
+    // жизни ключа myId и его гарантированное снятие через
+    // AppSessionManager.untrack в onDispose — срабатывает как при обычной
+    // навигации (уход с экрана), так и подчищается страховкой
+    // AppSessionManager.performLogout() при выходе из аккаунта.
+    // ────────────────────────────────────────────────────────────────
+    DisposableEffect(myId) {
         val messagesRef = FirebaseDatabase.getInstance().getReference("messages")
-        messagesRef.addChildEventListener(object : ChildEventListener {
+        val listener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                 val chatId = snapshot.key ?: return
                 if (chatId.contains(myId)) {
@@ -130,8 +144,17 @@ fun ChatListScreen(
             override fun onChildChanged(s: DataSnapshot, p: String?) {}
             override fun onChildRemoved(s: DataSnapshot) {}
             override fun onChildMoved(s: DataSnapshot, p: String?) {}
-            override fun onCancelled(e: DatabaseError) {}
-        })
+            override fun onCancelled(e: DatabaseError) {
+                Log.w("ChatListScreen", "messages listener cancelled: ${e.message}")
+            }
+        }
+
+        AppSessionManager.track(messagesRef, listener)
+        messagesRef.addChildEventListener(listener)
+
+        onDispose {
+            AppSessionManager.untrack(messagesRef, listener)
+        }
     }
 
     Box(Modifier.fillMaxSize().background(backgroundColor)) {
@@ -161,7 +184,6 @@ fun ChatListScreen(
             }
 
             LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(bottom = 100.dp)) {
-                // Отображение результата поиска
                 searchResult?.let { profile ->
                     item {
                         Text("Результат поиска:", color = globalAccent, fontSize = 12.sp, modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp))
@@ -171,7 +193,6 @@ fun ChatListScreen(
                     }
                 }
 
-                // Список чатов (показываем только если поиск пуст)
                 if (searchQuery.isEmpty()) {
                     items(activeChats.sortedByDescending { it.timestamp }, key = { it.chatId }) { msg ->
                         ActiveChatRow(msg, globalAccent, myId, messageDao) {
@@ -284,28 +305,8 @@ fun ActiveChatRow(
 
     var liveName by remember { mutableStateOf(defaultName) }
     var livePhoto by remember { mutableStateOf("") }
-
-    // null = ещё расшифровывается ("Загрузка...")
     var decryptedPreview by remember { mutableStateOf<String?>(null) }
 
-    // ────────────────────────────────────────────────────────────────
-    // ЕДИНСТВЕННЫЙ путь расшифровки превью — safeDecryptSync, тот же
-    // хелпер, что использует GlassBubble в ChatScreen.kt. Раньше здесь
-    // было ТРИ конфликтующих попытки:
-    //   1) ранний return "Зашифровано", если legacy secretKey ещё не
-    //      создан (а он создаётся только при открытии ЭТОГО чата в
-    //      ChatScreen) — для ratchet-сообщений (isPlaintextCached=true)
-    //      secretKey вообще не нужен, но проверка на это не делалась,
-    //      и превью залипало на "Зашифровано" НАВСЕГДА;
-    //   2) правильный safeDecryptSync — записывал верный результат;
-    //   3) сразу следом — сырой GhostCrypto.decryptMessage(rawText,...),
-    //      который пытался расшифровать УЖЕ РАСШИФРОВАННЫЙ (кэшированный
-    //      plaintext) текст ratchet-сообщений как ciphertext и падал в
-    //      "[ошибка формата]"/мусор, ЗАТИРАЯ верный результат п.2.
-    // safeDecryptSync сам возвращает msg.text немедленно, если
-    // isPlaintextCached=true, поэтому secretKey для этого случая
-    // вообще не запрашиваем — передаём "" безопасно.
-    // ────────────────────────────────────────────────────────────────
     LaunchedEffect(message.fKey, message.text, message.chatId, message.isPlaintextCached) {
         val secretKey = if (message.isPlaintextCached) {
             ""
@@ -320,7 +321,6 @@ fun ActiveChatRow(
 
         decryptedPreview = if (ChatUtils.isPhotoMessage(result)) "📷 Фотография" else result
 
-        // Если расшифровали через legacy no-AAD фоллбэк — фоном апгрейдим запись в БД.
         legacyPlainForUpgrade?.let { plain ->
             launch(Dispatchers.IO) {
                 reEncryptAndUpdate(message, plain, secretKey, message.chatId, messageDao)
@@ -328,9 +328,7 @@ fun ActiveChatRow(
         }
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // Получение имени и фото собеседника (без изменений)
-    // ────────────────────────────────────────────────────────────────
+    // Единственное значение — уже single value event, авто-снимается.
     LaunchedEffect(peerId) {
         FirebaseDatabase.getInstance().getReference("users").child(peerId)
             .addValueEventListener(object : ValueEventListener {
